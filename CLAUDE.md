@@ -14,7 +14,7 @@
 - RLS policy `org_isolation` on every tenant table; `SECURITY DEFINER` functions use `SET search_path = public` and grant EXECUTE only to `resolvd_app`; composite foreign keys via `(organization_id, x_id)`.
 - Auth: `resolvd_token` httpOnly cookie, JWT payload `{ sub, org }` only, role loaded from the DB on every request, lockout 5 attempts / 15 minutes, passwords 10–72 chars with a letter and a number, bcryptjs cost 12.
 - Never alter `organizations` or `users` (migrations 001–003, 007 mirror Resolvd; 004–006 unused). ScreenGuide schema starts at migration 100.
-- If the Resolvd repo is available, read it and match its actual code; report any disagreement with Section 4.1 instead of silently resolving it.
+- Resolvd has not been built yet; ScreenGuide is the first codebase to implement these conventions. Section 4.1 is the complete spec, so don't look for a Resolvd repo. Build the shared parts exactly as written so Resolvd can match them later.
 
 ## Before using any library
 - Check its current official docs (Express 5, pg, pg-boss, ws, Anthropic SDK, Deepgram, ElevenLabs, Mantine, TanStack Query, Document Picture-in-Picture, Render, Neon, Vercel). Don't rely on memory.
