@@ -42,7 +42,8 @@ blocked `@scarf/scarf` script, dev-only audit findings, `.nvmrc`/`.editorconfig`
 
 ### Known issues
 - `npm audit`: 4 moderate, dev-only (ESLint 10 → `minimatch`), no fix without downgrading ESLint. No
-  high/critical. Client production dependencies: 0.
+  high/critical. Production dependencies (`npm audit --omit=dev`): 0 in both the client and the
+  server.
 - Local PostgreSQL is 18 (from `psql --version`); CI uses 17 to match Resolvd. Nothing in Phase 0 depends
   on the difference; keep migrations to features available in 17.
 
