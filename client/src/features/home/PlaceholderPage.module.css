@@ -1,0 +1,5 @@
+/* PlaceholderPage.module.css: spacing for the Phase 0 placeholder page. */
+.page {
+  padding-top: var(--mantine-spacing-xl);
+  padding-bottom: var(--mantine-spacing-xl);
+}
