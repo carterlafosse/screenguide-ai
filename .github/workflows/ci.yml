@@ -1,0 +1,91 @@
+# ci.yml: lint, test and build the server and client on every push and pull request.
+# Modelled on Resolvd's CI: the server job runs against a real PostgreSQL 17 service.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Server (lint + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      # CI-only throwaway passwords for the service container (not secrets).
+      CI_OWNER_PW: ci_owner_password_123
+      CI_APP_PW: ci_app_password_123
+      DATABASE_URL: postgres://resolvd_app:ci_app_password_123@localhost:5432/screenguide_test
+      MIGRATION_DATABASE_URL: postgres://resolvd_owner:ci_owner_password_123@localhost:5432/screenguide_test
+      AI_MOCK: 'true'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      # Same script developers run locally. Run it twice to prove it is idempotent.
+      - name: Create roles and databases (setup.sql, run twice)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for run in 1 2; do
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
+              -v owner_pw="$CI_OWNER_PW" -v app_pw="$CI_APP_PW" \
+              -f db/setup/setup.sql
+          done
+
+      - name: Check both roles can connect to screenguide_test
+        run: |
+          psql "$DATABASE_URL" -tAc "SELECT current_user"
+          psql "$MIGRATION_DATABASE_URL" -tAc "SELECT current_user"
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  client:
+    name: Client (lint + test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
