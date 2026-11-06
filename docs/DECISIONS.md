@@ -104,7 +104,7 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
 19. **2026-11-06: Known `npm audit` findings (moderate, dev-only).** 4 moderate advisories in both
     packages, all from `minimatch` via ESLint 10's `@eslint/config-array` (GHSA-g3hv-75wg-m249). The only
     automatic fix downgrades to ESLint 9. Accepted for now: dev tooling only, never shipped or run on
-    untrusted globs. `npm audit --omit=dev` is clean in the client. Re-check before deploy (Phase 10 needs
+    untrusted globs. `npm audit --omit=dev` is clean in the client, and the server is clean too. Re-check before deploy (Phase 10 needs
     no high/critical).
 
 20. **2026-11-06: Repo extras `.nvmrc` and `.editorconfig`.** Not in the plan's file tree; added so the
