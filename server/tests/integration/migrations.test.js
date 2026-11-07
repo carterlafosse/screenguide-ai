@@ -157,6 +157,21 @@ describe('schema rules', () => {
     expect(result.role).toEqual({ rolsuper: false, rolbypassrls: false });
   });
 
+  it("resolvd_app has exactly Resolvd's privileges on the shared tables", async () => {
+    const privileges = await withOwnerClient(async (c) => {
+      const r = await c.query(`
+        SELECT table_name, string_agg(privilege_type, ',' ORDER BY privilege_type) AS privileges
+        FROM information_schema.role_table_grants
+        WHERE grantee = 'resolvd_app' AND table_name IN ('organizations', 'users')
+        GROUP BY table_name`);
+      return Object.fromEntries(r.rows.map((x) => [x.table_name, x.privileges]));
+    });
+    expect(privileges).toEqual({
+      organizations: 'SELECT,UPDATE',
+      users: 'DELETE,INSERT,SELECT,UPDATE',
+    });
+  });
+
   it('every table with updated_at has the set_updated_at trigger', async () => {
     const missing = await withOwnerClient(async (c) => {
       const r = await c.query(`

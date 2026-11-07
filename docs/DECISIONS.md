@@ -130,12 +130,15 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     stops an org row being updated to another id. New orgs are inserted only through
     `create_organization`.
 
-24. **2026-11-07: Grant matrix for `resolvd_app`.** `organizations`: `SELECT, UPDATE`. `users`: `SELECT,
-    INSERT, UPDATE` (users are deactivated, never deleted). `audit_events` and `usage_events`: `SELECT,
-    INSERT` (append-only). `ws_tickets`: `SELECT, INSERT` (consumed through `consume_ws_ticket`).
-    `step_snapshots`: no `UPDATE`. Session data: full CRUD. Settings, preferences, invitations and
-    integration settings: no `DELETE`. Sequences: `USAGE, SELECT`. Org deletion (Phase 10) will need its
-    own `SECURITY DEFINER` function, since the app can't delete from `organizations` or `users`.
+24. **2026-11-07: Grant matrix for `resolvd_app`.** Shared tables match **Resolvd's 007 exactly**:
+    `organizations`: `SELECT, UPDATE`; `users`: `SELECT, INSERT, UPDATE, DELETE` (corrected 2026-11-07:
+    the first draft left out `DELETE`, which didn't match Resolvd; a test now pins both). ScreenGuide
+    tables: `audit_events` and `usage_events`: `SELECT, INSERT` (append-only). `ws_tickets`: `SELECT,
+    INSERT` (consumed through `consume_ws_ticket`). `step_snapshots`: no `UPDATE`. Session data: full
+    CRUD. Settings, preferences, invitations and integration settings: no `DELETE`. Sequences: `USAGE,
+    SELECT`. Users are still deactivated rather than deleted in normal use (Section 4.1 / Phase 3). Org
+    deletion (Phase 10) will need its own `SECURITY DEFINER` function, since the app can't delete from
+    `organizations`.
 
 25. **2026-11-07: Where the definer functions live.** `accept_invitation` is in `103` and
     `consume_ws_ticket` is in `110`, next to their tables, as the plan's per-migration descriptions say.

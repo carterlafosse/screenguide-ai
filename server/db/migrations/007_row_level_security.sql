@@ -58,8 +58,8 @@ REVOKE ALL ON FUNCTION create_organization(TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION auth_find_user_by_email(TEXT) TO resolvd_app;
 GRANT EXECUTE ON FUNCTION create_organization(TEXT, TEXT) TO resolvd_app;
 
--- ----- Grants to the runtime role -----
+-- ----- Grants to the runtime role (exactly Resolvd's 007) -----
 GRANT USAGE ON SCHEMA public TO resolvd_app;
 GRANT SELECT, UPDATE ON organizations TO resolvd_app;
-GRANT SELECT, INSERT, UPDATE ON users TO resolvd_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON users TO resolvd_app;
 GRANT USAGE, SELECT ON SEQUENCE users_id_seq TO resolvd_app;
