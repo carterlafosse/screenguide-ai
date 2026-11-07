@@ -319,7 +319,7 @@ export async function seed(connectionString, { log = () => {} } = {}) {
 // ----- CLI -----
 const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isCli) {
-  await import('dotenv/config');
+  await import('../src/config/loadDotenv.js');
   try {
     await seed(process.env.MIGRATION_DATABASE_URL, { log: (message) => console.log(message) });
     console.log(`Done. Every seeded user's password is: ${SEED_PASSWORD}`);

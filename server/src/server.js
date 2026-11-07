@@ -1,7 +1,7 @@
 // server.js: starts the HTTP server for local development and production.
 // Phase 0 placeholder: Phase 2 replaces the env handling with src/config/env.js (Zod)
 // and adds pg-boss, the WebSocket server and full graceful shutdown.
-import 'dotenv/config';
+import './config/loadDotenv.js';
 import { createApp } from './app.js';
 
 const port = Number(process.env.PORT) || 4001;

@@ -1,6 +1,6 @@
 // vitest.config.js: server test runner settings. Loads server/.env, points both database URLs at
 // screenguide_test, and runs test files one at a time (they share one real PostgreSQL database).
-import 'dotenv/config';
+import './src/config/loadDotenv.js';
 import { defineConfig } from 'vitest/config';
 import { testDatabaseUrls } from './tests/testEnv.js';
 

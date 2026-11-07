@@ -83,7 +83,7 @@ export async function migrate(connectionString, { dir = DEFAULT_DIR, log = () =>
 // ----- CLI -----
 const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isCli) {
-  await import('dotenv/config');
+  await import('../src/config/loadDotenv.js');
   try {
     const applied = await migrate(process.env.MIGRATION_DATABASE_URL, {
       log: (message) => console.log(message),
