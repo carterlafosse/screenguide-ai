@@ -157,6 +157,18 @@ describe('schema rules', () => {
     expect(result.role).toEqual({ rolsuper: false, rolbypassrls: false });
   });
 
+  it('users: name, email and password_hash are NOT NULL (shared shape Resolvd copies)', async () => {
+    const columns = await withOwnerClient(async (c) => {
+      const r = await c.query(`
+        SELECT column_name, is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users'
+          AND column_name IN ('name', 'email', 'password_hash')`);
+      return Object.fromEntries(r.rows.map((x) => [x.column_name, x.is_nullable]));
+    });
+    expect(columns).toEqual({ name: 'NO', email: 'NO', password_hash: 'NO' });
+  });
+
   it("resolvd_app has exactly Resolvd's privileges on the shared tables", async () => {
     const privileges = await withOwnerClient(async (c) => {
       const r = await c.query(`

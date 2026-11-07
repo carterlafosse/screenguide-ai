@@ -1,12 +1,13 @@
--- 003_users.sql: users (mirrors Resolvd's 003 exactly as given in plan Section 4.1; never altered).
--- Columns are copied verbatim from Section 4.1, including which ones are nullable.
+-- 003_users.sql: users, shared with Resolvd (plan Section 4.1; never altered by ScreenGuide).
+-- ScreenGuide defines the shared shape first: name, email and password_hash are NOT NULL, and
+-- Resolvd's 003 must copy this file exactly (docs/DECISIONS.md entry 22).
 
 CREATE TABLE users (
   id                    SERIAL PRIMARY KEY,
   organization_id       INT NOT NULL REFERENCES organizations(id),
-  name                  VARCHAR(100),
-  email                 VARCHAR(255),
-  password_hash         TEXT,
+  name                  VARCHAR(100) NOT NULL,
+  email                 VARCHAR(255) NOT NULL,
+  password_hash         TEXT NOT NULL,
   role                  user_role NOT NULL DEFAULT 'end_user',
   department            VARCHAR(100),
   is_active             BOOLEAN NOT NULL DEFAULT TRUE,

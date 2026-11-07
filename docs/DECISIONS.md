@@ -120,10 +120,15 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     the same definition**, or this migration changes to match before the merge.
     Alternatives: `TEXT`; `VARCHAR(255)`.
 
-22. **2026-11-07: `users` columns copied verbatim from Section 4.1, including nullability.** As the plan
-    instructs when Resolvd's file is unavailable: `name`, `email` and `password_hash` are nullable in the
-    table. The app layer (Zod, Phase 3) requires them. The lower-email unique index allows only one row per
-    email, and PostgreSQL treats NULLs as distinct.
+22. **2026-11-07: `users.name`, `users.email` and `users.password_hash` are `NOT NULL`. Resolvd must copy
+    this.** Section 4.1 lists them without `NOT NULL` and says to take constraints from Resolvd's files.
+    Resolvd isn't built yet, so ScreenGuide defines the shared shape, and Carter decided all three are
+    required: every user has a name, a login email and a password (accounts are created by an admin,
+    registration or an accepted invitation, which all set them). `NOT NULL` on `email` also closes a gap:
+    the lower-email unique index treats NULLs as distinct, so several users with no email could have
+    existed. **Resolvd's `003_users.sql` must use exactly the same column definitions.** A test pins the
+    nullability of these columns. (First draft: nullable, copied verbatim; changed before Phase 1 was
+    pushed.)
 
 23. **2026-11-07: `org_self` on `organizations` also has `WITH CHECK (id = current_org_id())`.** Section
     4.1 gives only the expression; using it for both `USING` and `WITH CHECK` matches `org_isolation` and
