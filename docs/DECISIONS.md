@@ -206,3 +206,14 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     `npm run seed` (which exits with code 1) and any code that imports it; a unit test asserts it never
     connects. The demo seed (`seed:demo`, Phase 9) is a separate script for production's demo org and
     gets its own rules.
+
+33. **2026-11-07: Two more shared-shape details in `007_row_level_security.sql` that Resolvd must
+    copy.** Section 4.1 doesn't spell these out, and ScreenGuide implements the shared migrations first:
+    - **`org_self` has `WITH CHECK (id = current_org_id())`** as well as `USING`, so an org row can't be
+      updated to another id (reasoning in entry 23).
+    - **`auth_find_user_by_email(p_email)` also returns `name` and `email`.** The full column list is
+      `id, organization_id, name, email, password_hash, role, is_active, failed_login_attempts,
+      locked_until`. Login needs `name` and `email` to build the response without a second query.
+
+    Resolvd's 007 must define both exactly the same way, so that the shared migrations and the auth code
+    that calls the function behave identically in both apps.
