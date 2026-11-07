@@ -136,7 +136,7 @@ This section is binding. Its purpose: one day, ScreenGuide's modules drop into R
 | Docs | `server/openapi.yaml` (OpenAPI 3.0.3) served by `swagger-ui-express` at `/api/docs` |
 | Server tests | **Vitest + Supertest** against a **real PostgreSQL test database** (`tests/globalSetup.js` migrates and seeds it; `fileParallelism: false`; helper `loginAs(email)` returning a Supertest agent) |
 | Front end | **React (Vite), Mantine, TanStack Query, React Router.** `src/api/client.js` fetch wrapper with `credentials: 'include'` and an `ApiError` class; `useAuth()` via query key `['me']`; `RequireAuth` / `RequireRole` guards; Mantine `AppShell` layout |
-| Component style | Graeme's structure: a header comment saying what the component does, then sections in order — `// ----- State -----`, `// ----- Data -----`, `// ----- Handlers -----`, `// ----- Render -----`. Custom styles in a CSS module beside the component (`StepCard.module.css`) with clear class names; Mantine props for the rest. |
+| Component style | the standard component structure: a header comment saying what the component does, then sections in order — `// ----- State -----`, `// ----- Data -----`, `// ----- Handlers -----`, `// ----- Render -----`. Custom styles in a CSS module beside the component (`StepCard.module.css`) with clear class names; Mantine props for the rest. |
 | Hosting | **Render** (API), **Neon** (Postgres), **Vercel** (front end, with a rewrite proxying `/api` to Render) |
 | Repo layout | `client/`, `server/`, `docs/` at the root |
 

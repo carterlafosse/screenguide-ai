@@ -31,7 +31,7 @@
 ## Code standards
 - Plain JavaScript. A short header comment at the top of each file saying what it does; JSDoc comments are fine as documentation (no type-checking tooling).
 - Small, focused files. Vendor SDKs only behind provider modules (`LlmProvider`, `SttRelay`, `TtsStreamer`, `TicketSink`).
-- React components (Graeme's structure, same as Resolvd): header comment describing the component, then sections in this order with comments — `// ----- State -----`, `// ----- Data -----`, `// ----- Handlers -----`, `// ----- Render -----`. Custom styles in a CSS module beside the component with clear class names. Mantine props for everything else.
+- React components (the standard component structure, same as Resolvd): header comment describing the component, then sections in this order with comments — `// ----- State -----`, `// ----- Data -----`, `// ----- Handlers -----`, `// ----- Render -----`. Custom styles in a CSS module beside the component with clear class names. Mantine props for everything else.
 - Canadian spelling in all user-facing copy (colour, organization, cancelled, centre).
 - Accessibility: keyboard reachable, labelled controls, `aria-live` captions, respect reduced motion.
 
