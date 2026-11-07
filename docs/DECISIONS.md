@@ -199,3 +199,10 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
 31. **2026-11-07: dotenv loaded with `quiet: true`** through `src/config/loadDotenv.js`. dotenv 17+
     prints an "injected env" line on every load by default. It names no values, but it is noise in
     server logs and test output.
+
+32. **2026-11-07: `seed()` refuses to run when `NODE_ENV=production`.** Every Acme/Globex user shares the
+    published password `ScreenGuide123`, so seeding a production database would create known-password
+    accounts. The check is inside `seed()`, before hashing or connecting, so it covers both
+    `npm run seed` (which exits with code 1) and any code that imports it; a unit test asserts it never
+    connects. The demo seed (`seed:demo`, Phase 9) is a separate script for production's demo org and
+    gets its own rules.

@@ -348,6 +348,12 @@ async function seedRemainingTables(client, { org, orgId, userIds, resolvedId, ac
  * @returns {Promise<Record<string, { orgId: number, userIds: Record<string, number> }>>}
  */
 export async function seed(connectionString, { log = () => {} } = {}) {
+  // Every seeded user shares a published password, so never seed a production database.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'seed: refusing to run with NODE_ENV=production (seeded users share a known password)',
+    );
+  }
   if (!connectionString) throw new Error('seed: a connection string is required');
   const passwordHash = await bcrypt.hash(SEED_PASSWORD, BCRYPT_COST);
 
