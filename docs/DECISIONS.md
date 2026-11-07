@@ -109,3 +109,74 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
 
 20. **2026-11-06: Repo extras `.nvmrc` and `.editorconfig`.** Not in the plan's file tree; added so the
     Node version and LF/2-space formatting are consistent across editors and CI. No new packages.
+
+---
+
+## Phase 1: database, migrations and RLS
+
+21. **2026-11-07: `organizations.name VARCHAR(100) NOT NULL`, `slug VARCHAR(50) NOT NULL UNIQUE` (assumed).**
+    Section 4.1 leaves these types to "exactly as in Resolvd's 002_organizations.sql", and Resolvd hasn't
+    been written yet. Chose lengths matching `users.name` and a typical URL slug. **Resolvd's 002 must use
+    the same definition**, or this migration changes to match before the merge.
+    Alternatives: `TEXT`; `VARCHAR(255)`.
+
+22. **2026-11-07: `users` columns copied verbatim from Section 4.1, including nullability.** As the plan
+    instructs when Resolvd's file is unavailable: `name`, `email` and `password_hash` are nullable in the
+    table. The app layer (Zod, Phase 3) requires them. The lower-email unique index allows only one row per
+    email, and PostgreSQL treats NULLs as distinct.
+
+23. **2026-11-07: `org_self` on `organizations` also has `WITH CHECK (id = current_org_id())`.** Section
+    4.1 gives only the expression; using it for both `USING` and `WITH CHECK` matches `org_isolation` and
+    stops an org row being updated to another id. New orgs are inserted only through
+    `create_organization`.
+
+24. **2026-11-07: Grant matrix for `resolvd_app`.** `organizations`: `SELECT, UPDATE`. `users`: `SELECT,
+    INSERT, UPDATE` (users are deactivated, never deleted). `audit_events` and `usage_events`: `SELECT,
+    INSERT` (append-only). `ws_tickets`: `SELECT, INSERT` (consumed through `consume_ws_ticket`).
+    `step_snapshots`: no `UPDATE`. Session data: full CRUD. Settings, preferences, invitations and
+    integration settings: no `DELETE`. Sequences: `USAGE, SELECT`. Org deletion (Phase 10) will need its
+    own `SECURITY DEFINER` function, since the app can't delete from `organizations` or `users`.
+
+25. **2026-11-07: Where the definer functions live.** `accept_invitation` is in `103` and
+    `consume_ws_ticket` is in `110`, next to their tables, as the plan's per-migration descriptions say.
+    The cross-org purge functions are in `111`: `purge_expired_sessions()`,
+    `purge_idempotency_keys(max_age)` and `purge_expired_ws_tickets()`. Retention deletes finished
+    sessions older than the org's `retention_days`, and everything attached cascades with them.
+    `audit_events` and `usage_events` are not purged by retention: they hold no transcript content, and
+    the audit log is meant to be permanent. Revisit in Phase 10 if needed.
+    `accept_invitation` returns `(user_id, organization_id, role)` and raises `INVITATION_INVALID`
+    (SQLSTATE `P0001`) for an unknown, used, revoked or expired token. A duplicate email surfaces as the
+    normal `23505`.
+
+26. **2026-11-07: Constraints and indexes beyond the plan's column lists.** CHECKs: `speech_rate` 0.8–1.2
+    (Section 11.2), `input_mode` in `handsfree`/`push_to_talk`/`typing` (Section 5.3), `step_snapshots`
+    ≤ 80 KB (Section 14.2), `suggested_priority` in `low`/`medium`/`high`/`critical`, and
+    `idempotency_keys.status` in `in_progress`/`completed`. `NOT NULL` on required content (message
+    content, step title/instruction, ticket title/summary). `UNIQUE (organization_id, id)` on every table
+    another table references (`invitations`, `session_steps`, `escalation_tickets`). Extra
+    `organization_id` indexes on child tables, so RLS-filtered scans stay indexed.
+
+27. **2026-11-07: `usage_events` → session FK is `ON DELETE SET NULL (session_id)`.** Usage and cost
+    history outlive a deleted session. The column-list form (PostgreSQL 15+) clears only `session_id`,
+    not `organization_id`. Works on the local 18 and the CI 17.
+
+28. **2026-11-07: Tests always use `screenguide_test`, with URLs derived from `.env`.** `vitest.config.js`
+    takes `DATABASE_URL` / `MIGRATION_DATABASE_URL` and swaps the database name. That way `npm test` with a
+    dev `.env` can't touch dev data, and no extra env variables are needed. `globalSetup` drops and
+    recreates the `public` schema, but only in a database whose name ends in `_test`, then migrates and
+    seeds. Alternative: separate `TEST_DATABASE_URL` variables (more setup, easy to point at dev by
+    mistake).
+
+29. **2026-11-07: Seed details.** One shared dev password (`ScreenGuide123`, exported from
+    `db/seeds/users.js`), hashed once per run with bcryptjs cost 12 and reused for all 12 users, which
+    keeps the seed around 1.5 s. Emails use the reserved `.test` domain. The seed runs as the owner in one
+    transaction and can be rerun: it deletes Acme's and Globex's rows first and never touches other orgs.
+
+30. **2026-11-07: Migration runner extras.** Only files named `NNN_name.sql` are applied, so the README
+    is skipped. A PostgreSQL advisory lock serializes concurrent runs, such as two deploys starting at
+    once. The runner refuses to run as `resolvd_app`. `migrate(connectionString, { dir })` takes a
+    directory, so the rollback test can use a temporary broken migration.
+
+31. **2026-11-07: dotenv loaded with `quiet: true`** through `src/config/loadDotenv.js`. dotenv 17+
+    prints an "injected env" line on every load by default. It names no values, but it is noise in
+    server logs and test output.

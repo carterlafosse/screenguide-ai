@@ -46,10 +46,21 @@ Copy-Item server/.env.example server/.env
 
 Then edit `server/.env` (never commit it). See `server/.env.example` for every variable.
 
-### 3. Install and run
+### 3. Create the tables and sample data
 
 ```powershell
-cd server; npm install; npm run dev     # API on http://127.0.0.1:4001
+cd server; npm install
+npm run migrate    # applies db/migrations to screenguide_dev as resolvd_owner
+npm run seed       # Acme Corp and Globex sample orgs (password for every seeded user: ScreenGuide123)
+```
+
+Seeded logins are listed in `server/db/seeds/users.js` (for example `admin@acme.test`). `npm test` uses
+the separate `screenguide_test` database and resets it on every run.
+
+### 4. Run
+
+```powershell
+cd server; npm run dev                  # API on http://127.0.0.1:4001
 cd client; npm install; npm run dev     # app on http://127.0.0.1:5174 (second terminal)
 ```
 
@@ -68,7 +79,7 @@ the cookies apart, so logging into one doesn't log you out of the other.
 | Tests (Vitest) | `npm test` | `npm test` |
 | Other | `npm start`, `npm run migrate`, `npm run seed`, `npm run seed:demo`, `npm run kb:build` | `npm run build` |
 
-`migrate`, `seed`, `seed:demo` and `kb:build` are placeholders until Phases 1 and 9.
+`seed:demo` and `kb:build` are placeholders until Phase 9.
 
 ## Docs
 

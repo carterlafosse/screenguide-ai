@@ -56,10 +56,100 @@ Exactly two roles, shared with Resolvd (cluster-wide in PostgreSQL):
 `setup.sql` creates the roles only if they're missing and never changes an existing role's password, so
 ScreenGuide and Resolvd can be set up on the same machine in either order.
 
+## Database
+
+PostgreSQL, raw SQL with `pg`, no ORM. Integer `SERIAL` ids, `TIMESTAMPTZ` timestamps.
+
+### Migrations and the shared-shape rule
+
+`server/scripts/migrate.js` (`npm run migrate`, as `resolvd_owner`) applies every numbered file in
+`server/db/migrations/` that isn't yet recorded in `schema_migrations`, each in its own transaction
+(`BEGIN` → SQL → record filename → `COMMIT`; `ROLLBACK` on error, so a failed file leaves no trace). An
+advisory lock stops two runs overlapping.
+
+| Files | Rule |
+|---|---|
+| `001`–`003`, `007` | **Mirror Resolvd exactly** (same numbers, names and table shapes). Never edited for ScreenGuide's needs. |
+| `004`–`006` | Intentionally unused (Resolvd's tickets/categories/comments), so the histories line up. |
+| `100`+ | ScreenGuide's own schema. **Never alters `organizations` or `users`**; extra org/user data lives in `org_settings` and `user_preferences`. At merge time only these move into Resolvd, renumbered. |
+
+### Tables
+
+| Table | Purpose | Notes |
+|---|---|---|
+| `organizations` | Tenants (shared with Resolvd) | RLS policy `org_self` (`id = current_org_id()`) |
+| `users` | People (shared with Resolvd) | email unique across all orgs (`LOWER(email)`) |
+| `org_settings` | Plan, retention, snapshots, IT contact, auto-push | one row per org |
+| `user_preferences` | Voice, input mode, large text, consent | PK `(organization_id, user_id)` |
+| `invitations` | Admin invites (hashed token) | one open invite per email per org |
+| `assist_sessions` | One help session; the server's source of truth for session state | |
+| `session_messages` | Transcript | cascade-deleted with the session |
+| `session_steps` | Guided steps and outcomes | cascade-deleted with the session |
+| `step_snapshots` | Optional downscaled JPEG per step (≤ 80 KB) | only when the org turns snapshots on |
+| `escalation_tickets` | AI-written ticket + Resolvd push state | one per session |
+| `session_feedback` | 1–5 rating | one per session |
+| `usage_events` | Tokens, latency, TTS/STT usage per call | keeps its row (session_id cleared) when a session is deleted |
+| `audit_events` | Append-only audit log | app role: `SELECT, INSERT` only |
+| `integration_settings` | Resolvd connector (encrypted key) | one row per org |
+| `idempotency_keys` | Stored responses for unsafe POSTs | purged after 24 h |
+| `ws_tickets` | Single-use 60 s WebSocket tickets (hashed) | consumed by `consume_ws_ticket` |
+
+Every tenant table has `organization_id INT NOT NULL REFERENCES organizations(id)`. Tables that others
+reference have `UNIQUE (organization_id, id)`, and references are **composite foreign keys**
+`(organization_id, x_id) → x (organization_id, id)`, so a row can never point at another org's row
+even if application code makes a mistake. Tables with `updated_at` use the shared `set_updated_at()`
+trigger.
+
+### Row-level security
+
+- `current_org_id()` reads the transaction-local setting `app.current_org_id` (set by `withOrg` in
+  Phase 2 with `set_config(..., true)`) and returns `NULL` when it isn't set.
+- Every tenant table has RLS enabled and the policy **`org_isolation`**:
+  `USING (organization_id = current_org_id()) WITH CHECK (organization_id = current_org_id())`.
+- With no org set, `resolvd_app` sees **zero rows** everywhere; inside a transaction with an org set it
+  sees only that org's rows, and can't insert or move rows into another org.
+- `resolvd_owner` owns the tables, so RLS doesn't apply to it (RLS isn't `FORCE`d). That is why the API
+  never connects as the owner.
+
+![RLS demo: 0 rows with no org set, only Acme's rows with Acme's org set](screenshots/phase1-rls.png)
+
+To reproduce: `psql -U resolvd_app -d screenguide_dev -f docs/rls-demo.sql` after `npm run migrate` and
+`npm run seed`.
+
+### SECURITY DEFINER functions
+
+A few operations must happen before an org is known, or deliberately across orgs. They run as the
+owner (bypassing RLS) through narrow functions. Each one uses `SET search_path = public` and
+`REVOKE ALL ... FROM PUBLIC`, and grants `EXECUTE` only to `resolvd_app`. A test enforces this for every
+definer function.
+
+| Function | Why it needs to bypass RLS |
+|---|---|
+| `auth_find_user_by_email(p_email)` | Login: the org isn't known until the user is found |
+| `create_organization(p_name, p_slug)` | Registration: the org doesn't exist yet |
+| `accept_invitation(token_hash, name, password_hash)` | The invitee isn't signed in to any org |
+| `consume_ws_ticket(token_hash)` | WebSocket upgrade: atomic single use, before the org is known |
+| `purge_expired_sessions()` | Daily retention job, across all orgs |
+| `purge_idempotency_keys(max_age)` | Hourly cleanup, across all orgs |
+| `purge_expired_ws_tickets()` | Cleanup of old tickets, across all orgs |
+
+### Seeds
+
+`npm run seed` (as the owner) creates **Acme Corp** and **Globex**: each has 1 admin, 2 technicians and
+3 end users (emails and the shared dev password live in `server/db/seeds/users.js`), plus settings,
+preferences, a resolved session with feedback, an escalated session with a ticket and an active
+session. Rerunning replaces those two orgs and leaves any other data alone.
+
+### Tests
+
+`npm test` always uses `screenguide_test`. Its URL comes from your `.env` with the database name swapped,
+so tests can't touch dev data. `tests/globalSetup.js` drops and recreates the test schema, migrates and
+seeds it. `migrations.test.js` checks the catalog (RLS + `org_isolation` on every table with
+`organization_id`, definer-function hardening, that `resolvd_app` owns nothing, and `updated_at`
+triggers), so new tables are covered automatically. `rls.test.js` is the isolation acceptance test.
+
 ## Sections to come
 
-- **Database** (Phase 1): tables, shared-shape rule (001–003, 007 mirror Resolvd; 100+ ScreenGuide), RLS,
-  definer functions.
 - **HTTP request lifecycle** (Phase 2): middleware order, layers, errors, logging, request IDs.
 - **Jobs** (Phase 2/6): pg-boss with only the two roles.
 - **Auth** (Phase 3).
