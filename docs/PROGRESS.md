@@ -65,44 +65,51 @@ blocked `@scarf/scarf` script, dev-only audit findings, `.nvmrc`/`.editorconfig`
   purge functions), each with `SET search_path = public` and `EXECUTE` granted only to `resolvd_app`.
 - `server/db/seeds/users.js` and `scripts/seed.js`: Acme Corp and Globex, each with 1 admin, 2
   technicians and 3 end users with departments; org settings; preferences; 3 sessions (resolved with
-  steps, feedback and usage; escalated with a ticket; active); an audit row. Rerunnable.
+  steps, feedback and usage; escalated with a ticket; active); an audit row; and at least one row in
+  every other tenant table (invitation, step snapshot, integration settings, idempotency key, ws
+  ticket). Rerunnable; refuses to run when `NODE_ENV=production`.
 - Tests (`tests/globalSetup.js` resets, migrates and seeds `screenguide_test`):
   - `migrations.test.js`: order and recording, rerun is a no-op, a failing file rolls back completely,
     refuses the app role, and catalog-driven rules (RLS + policy on every table with `organization_id`,
-    definer-function hardening, app owns nothing, `updated_at` triggers).
-  - `rls.test.js`: the Phase 1 acceptance check plus per-table no-org / other-org checks, WITH CHECK,
-    cross-org update/delete, composite FK, append-only audit log, and each definer function's behaviour.
+    definer-function hardening, app owns nothing, `updated_at` triggers, `users` NOT NULL columns,
+    `resolvd_app`'s exact privileges on `organizations` and `users`).
+  - `rls.test.js`: the Phase 1 acceptance check, plus for every tenant table: a guard that both orgs
+    have seeded rows, 0 rows with no org set, and each org seeing its own rows but never the other's.
+    Also WITH CHECK, cross-org update/delete, composite FK, the append-only audit log, and each definer
+    function's behaviour.
+  - `tests/unit/seed.test.js`: the production guard (never connects).
 - `src/config/loadDotenv.js` (quiet dotenv), `docs/rls-demo.sql`, `docs/architecture.md` Database
   section, README setup steps for migrate/seed.
 
 ### Verified locally (Windows 11, Node 26.13.0, PostgreSQL 18.6)
-- `server`: `npm run lint` clean; `npm test`: **53 passed** (3 files), about 7 s including reset,
+- `server`: `npm run lint` clean; `npm test`: **71 passed** (4 files), about 8 s including reset,
   migrate and seed.
 - `client`: unchanged since Phase 0 (lint clean, 2 tests passing).
-- `npm run migrate` on `screenguide_dev` applied 16 files; a second run printed "Already up to date".
-  `npm run seed` created Acme (id 1) and Globex (id 2).
+- `screenguide_dev` was reset (public schema dropped and recreated as the owner) after the pre-push
+  fixes, then `npm run migrate` applied 16 files and `npm run seed` created Acme (id 1) and Globex
+  (id 2), with rows for both orgs in all 15 tenant tables. `NODE_ENV=production npm run seed` exits 1.
 - Acceptance, via `docs/rls-demo.sql` as `resolvd_app` on `screenguide_dev`: no org set → 0 rows; inside
   a transaction with Acme's org set → Acme's 3 sessions only; after `COMMIT` → 0 rows again. Also asserted
   by `rls.test.js`.
-- Mutation check: removing `assist_sessions` from the RLS list in `111` made 9 tests fail (acceptance and
-  catalog checks); restored, all pass.
+- Mutation checks: removing `assist_sessions` from the RLS list in `111` made 9 tests fail (acceptance and
+  catalog checks). After seeding every table, removing `invitations` (previously empty) made its
+  per-table checks fail too, not just the catalog check. Restored both times; all pass.
 - **Screenshot still needed:** `docs/screenshots/phase1-rls.png` (Carter to capture `rls-demo.sql` output).
 - CI: not run yet in Phase 1 (nothing pushed). CI uses PostgreSQL 17; everything used here
   (`ON DELETE SET NULL (col)`, `make_interval`, `acldefault`) exists in 17.
 
 ### Deviations
-See `DECISIONS.md` entries 21–31: assumed `organizations.name`/`slug` types, verbatim `users`
-nullability, `org_self` WITH CHECK, grant matrix, definer function placement and purge scope, extra
-constraints and indexes, `usage_events` SET NULL, test URLs derived from `.env`, seed details, runner
-extras, quiet dotenv.
+See `DECISIONS.md` entries 21–32: assumed `organizations.name`/`slug` types, `users` name/email/
+password_hash NOT NULL (Resolvd must copy), `org_self` WITH CHECK, grant matrix (`users` gets DELETE to
+match Resolvd's 007), definer function placement and purge scope, extra constraints and indexes,
+`usage_events` SET NULL, test URLs derived from `.env`, seed details (every tenant table seeded;
+seed orgs have snapshots on), runner extras, quiet dotenv, production guard on the seed.
 
 ### Known issues
-- `organizations.name`/`slug` types are an assumption that Resolvd must match (entry 21).
-- The per-table RLS checks are vacuous for tables the seed leaves empty (`invitations`, `ws_tickets`,
-  `idempotency_keys`, `integration_settings`, `step_snapshots`). The catalog test still guarantees each
-  has RLS and the right policy. The full isolation suite comes in Phase 10, once those tables get data.
+- `organizations.name`/`slug` types are an assumption that Resolvd must match (entry 21). The `users`
+  NOT NULL columns are a shared-shape decision Resolvd must copy (entry 22).
 - `npm audit`: unchanged (4 moderate, dev-only).
 
 ### Measurements
-- Server test run: ~7 s for 53 tests, including a full reset, migrate and seed. Seed alone: ~0.7 s per run
+- Server test run: ~8 s for 71 tests, including a full reset, migrate and seed. Seed alone: ~0.7 s per run
   (one bcryptjs cost-12 hash).
