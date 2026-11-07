@@ -1,12 +1,35 @@
 // migrations.test.js: the migration runner, and structural rules every migration must follow
 // (RLS on every tenant table, definer-function hardening, ownership, updated_at triggers).
 // The structural checks query the catalog, so new tables and functions are covered automatically.
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listMigrationFiles, migrate } from '../../scripts/migrate.js';
-import { withOwnerClient } from '../dbHelpers.js';
+import { pgError, withAppClient, withOwnerClient } from '../dbHelpers.js';
+
+describe('pg-boss schema (migration 112)', () => {
+  it('matches the schema version of the installed pg-boss package', async () => {
+    const pkg = JSON.parse(await readFile('node_modules/pg-boss/package.json', 'utf8'));
+    const version = await withOwnerClient(
+      async (c) => (await c.query('SELECT version FROM pgboss.version')).rows[0].version,
+    );
+    // If this fails after upgrading pg-boss: run `node scripts/generate-pgboss-migration.js`.
+    expect(Number(version)).toBe(Number(pkg.pgboss.schema));
+  });
+
+  it('is owned by resolvd_owner; resolvd_app owns nothing there and cannot create objects', async () => {
+    const owners = await withOwnerClient(async (c) => {
+      const r = await c.query(`
+        SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner
+        FROM pg_class c WHERE c.relnamespace = 'pgboss'::regnamespace`);
+      return r.rows.map((x) => x.owner);
+    });
+    expect(owners).toEqual(['resolvd_owner']);
+    const err = await withAppClient((c) => pgError(c.query('CREATE TABLE pgboss.sneaky (id INT)')));
+    expect(err.code).toBe('42501');
+  });
+});
 
 const EXPECTED_MIGRATIONS = [
   '001_types_and_helpers.sql',
@@ -25,6 +48,7 @@ const EXPECTED_MIGRATIONS = [
   '109_integrations.sql',
   '110_idempotency_ws_tickets.sql',
   '111_rls_and_grants.sql',
+  '112_pgboss.sql',
 ];
 
 describe('migration runner', () => {
