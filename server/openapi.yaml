@@ -1,0 +1,94 @@
+openapi: 3.0.3
+info:
+  title: ScreenGuide AI API
+  version: 0.2.0
+  description: |
+    REST API for ScreenGuide AI. All routes are under `/api`.
+    Errors always have the shape `{ "error": { "code", "message", "details"? } }`.
+    Every response carries an `X-Request-Id` header (send a UUID in `X-Request-Id` to set it).
+servers:
+  - url: /api
+tags:
+  - name: Health
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      description: Answers without touching the database. Use it to see whether the process is up.
+      responses:
+        '200':
+          description: The API process is running.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+  /ready:
+    get:
+      tags: [Health]
+      summary: Readiness check
+      description: Checks the database and the job queue. Render's health check uses this route.
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example: { status: ok, database: up, jobs: up }
+        '503':
+          description: The database or the job queue is down.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example: { status: unavailable, database: down, jobs: down }
+components:
+  schemas:
+    Readiness:
+      type: object
+      required: [status, database, jobs]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
+        database:
+          type: string
+          enum: [up, down]
+        jobs:
+          type: string
+          enum: [up, down]
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Some fields are missing or invalid
+            details:
+              description: Extra information, e.g. one entry per invalid field.
+  responses:
+    RateLimited:
+      description: Too many requests (`RATE_LIMITED`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such resource or route (`NOT_FOUND`, `ROUTE_NOT_FOUND`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
