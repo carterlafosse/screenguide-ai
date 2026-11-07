@@ -64,6 +64,10 @@ cd server; npm run dev                  # API on http://127.0.0.1:4001
 cd client; npm install; npm run dev     # app on http://127.0.0.1:5174 (second terminal)
 ```
 
+Check the API at `http://127.0.0.1:4001/api/ready` (database and job queue status) and browse the API
+docs at `http://127.0.0.1:4001/api/docs`. After pulling new code, run `npm run migrate` again; the
+API refuses to start the job queue if the database is behind.
+
 ### Running alongside Resolvd
 
 Both apps use a login cookie named `resolvd_token`, and browsers don't separate cookies by port. Open

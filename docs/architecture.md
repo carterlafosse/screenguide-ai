@@ -148,10 +148,82 @@ seeds it. `migrations.test.js` checks the catalog (RLS + `org_isolation` on ever
 `organization_id`, definer-function hardening, that `resolvd_app` owns nothing, and `updated_at`
 triggers), so new tables are covered automatically. `rls.test.js` is the isolation acceptance test.
 
+## HTTP request lifecycle
+
+`src/app.js` exports `createApp()`; `src/server.js` listens, starts the job queue and handles
+shutdown. Every request passes through, in order:
+
+1. **`requestId`**: reuses a valid UUID from `X-Request-Id` or generates one, then sets `req.id` and
+   the `X-Request-Id` response header.
+2. **helmet** (security headers, default CSP) → **cors** (only `CLIENT_ORIGIN`, with credentials).
+3. **pino-http**: logs every request; `req.log` is bound to `requestId`, so every line logged while
+   handling a request carries the id. Cookies, auth headers, passwords, API keys, frames, audio and
+   message content are redacted.
+4. **`express.json({ limit: '100kb' })`** → **cookie-parser** → **general rate limit** (300/min per IP
+   on `/api`).
+5. **Routes**: `authenticate` → `requireRole` → `validate({ body, params, query })` → (`idempotent()` on
+   unsafe POSTs) → controller → service → queries.
+6. **`notFound`** → **`errorHandler`**: everything becomes `{ error: { code, message, details? } }`.
+
+### Layers
+
+| Layer | Does | Doesn't |
+|---|---|---|
+| Route (`*.routes.js`) | Wires middleware and `validate()` to a controller | Any logic |
+| Controller | Reads `req`, calls one service function, sends the response | Business rules, SQL |
+| Service | Business rules; opens `withOrg(orgId, client => ...)`; writes audit rows and enqueues jobs on the same `client` | Know about HTTP |
+| Queries | Plain parameterized SQL taking `client` as the first argument | Open transactions |
+
+### Database helpers (`src/db/withOrg.js`)
+
+- `withTransaction(work)`: `BEGIN` → `work(client)` → `COMMIT`; `ROLLBACK` on error; always releases the
+  client.
+- `setOrg(client, orgId)`: `set_config('app.current_org_id', orgId, true)`, valid for this transaction
+  only.
+- `withOrg(orgId, work)`: both together. RLS then limits every query on that client to the org.
+
+### Errors
+
+Services throw `AppError` (`status`, `code`, `message`, `details`). The error handler also translates
+PostgreSQL `23505` → 409 `CONFLICT`, `23503` → 400 `INVALID_REFERENCE`, bad JSON → 400 `INVALID_JSON`,
+oversized bodies → 413. Anything unexpected is logged with the request id and answered with a generic
+500 `INTERNAL_ERROR`, so no internals leak.
+
+### Health, readiness and docs
+
+- `GET /api/health`: liveness, no database.
+- `GET /api/ready`: `{ status, database, jobs }`, 503 if either is down (2 s timeout each). Render's
+  health check points here.
+- `GET /api/docs`: Swagger UI for `server/openapi.yaml`; `GET /api/docs/openapi.json` serves the raw
+  document.
+
+### Idempotency, audit and secrets
+
+- **`idempotent()`** (unsafe POSTs): needs an `Idempotency-Key` UUID. It claims the key in its own short
+  transaction, stores the JSON response for 2xx/4xx and replays it for repeats. A different body with
+  the same key gets 422, a duplicate while the first request is still running gets 409, and 5xx results
+  aren't stored.
+- **`recordAudit(client, event)`** writes to `audit_events` on the caller's transaction client, so the
+  audit row commits or rolls back with the change. Only the actions in `AUDIT_ACTIONS` are accepted.
+- **`src/utils/crypto.js`**: AES-256-GCM with `ENCRYPTION_KEY`, stored as `iv:authTag:ciphertext`.
+
+## Jobs (pg-boss)
+
+- **Schema:** `pgboss`, installed by migration `112_pgboss.sql` as `resolvd_owner`. It's generated from
+  pg-boss's own plans by `scripts/generate-pgboss-migration.js`, which also writes upgrade migrations
+  after a pg-boss bump. pg-boss tables aren't tenant tables, so they have no RLS.
+- **Runtime:** pg-boss connects as `resolvd_app` with `migrate: false` (it only checks the schema
+  version) and `reindex: false`, using DML-only grants. There's no third role.
+- **`createJobs()`** (`src/jobs/index.js`) creates the queues from `queues.js` and registers the workers
+  from `workers/`. It also provides `isUp()` for `/api/ready` and `stop()` for shutdown.
+- **Enqueue in the same transaction:** `jobs.send(name, data, { client })` runs pg-boss's `INSERT` on
+  the `withOrg` client, so the job exists only if the data change commits.
+- **Payloads** always include `orgId` and `requestId` (validated). Workers log with both, do tenant work
+  inside `withOrg(job.data.orgId, ...)`, and must be safe to run twice.
+- **Shutdown:** stop accepting HTTP → `jobs.stop()` (running jobs get 10 s) → `pool.end()`.
+
 ## Sections to come
 
-- **HTTP request lifecycle** (Phase 2): middleware order, layers, errors, logging, request IDs.
-- **Jobs** (Phase 2/6): pg-boss with only the two roles.
 - **Auth** (Phase 3).
 - **Real-time** (Phase 5): WebSocket ticket auth, session channels (see `docs/ws-protocol.md`).
 - **AI engine and voice** (Phases 6–7).

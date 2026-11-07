@@ -217,3 +217,106 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
 
     Resolvd's 007 must define both exactly the same way, so that the shared migrations and the auth code
     that calls the function behave identically in both apps.
+
+---
+
+## Phase 2: Express foundation
+
+34. **2026-11-07: pg-boss schema installed by migration `112_pgboss.sql`, generated from pg-boss's own
+    construction plans.** Plan Section 8.2 asks for the schema to be created by `resolvd_owner` in a
+    numbered migration, with pg-boss running as `resolvd_app` and its automatic migrations off. I checked
+    the installed pg-boss 12.38.1 (schema version 46):
+    - `getConstructionPlans('pgboss')` returns the install SQL. It wraps itself in `BEGIN;`/`COMMIT;`,
+      which would end the runner's transaction early, so `scripts/generate-pgboss-migration.js` removes
+      that outer pair. The plan's `SET LOCAL` statements and transaction-scoped advisory lock still work
+      inside the runner's transaction. The script then appends grants for `resolvd_app`: `USAGE` on the
+      schema, `SELECT, INSERT, UPDATE, DELETE` on its tables, sequences, and `EXECUTE` on its functions.
+    - At runtime the app uses `new PgBoss({ migrate: false, createSchema: false, reindex: false })`.
+      With `migrate: false`, `start()` only checks the installed version ("requires migrations" if it
+      doesn't match). `reindex` is off because `REINDEX` needs table ownership.
+    - Queues use pg-boss's default `partition: false`, so `create_queue()` is a plain `INSERT` the app
+      role can do. Partitioned queues would run `CREATE TABLE` and need the owner.
+    - Verified as `resolvd_app`: start, create a queue, work, cron schedule, `supervise()` maintenance
+      and graceful stop, with no errors or warnings. The app role can't create objects in `pgboss`
+      (tested).
+    - **Upgrading pg-boss:** run `node scripts/generate-pgboss-migration.js`. It writes the next
+      numbered `NNN_pgboss_vXX.sql` from `getMigrationPlans()`, starting at the version recorded in the
+      last pgboss migration. A test fails if the installed schema doesn't match the package.
+
+    Alternative rejected: running pg-boss once with the owner URL inside `migrate.js`. It works, but the
+    SQL wouldn't be reviewable in git and it would bypass `schema_migrations`.
+
+35. **2026-11-07: Jobs are enqueued inside the caller's transaction.** `jobs.send(name, data, { client })`
+    passes pg-boss a `db` adapter that runs its `INSERT` on the `withOrg` client, so a job exists only
+    if the data change commits (outbox guarantee, plan Section 8.2). Tested both ways. Every payload must
+    carry `{ orgId, requestId }` (Zod envelope, checked on send and again in the worker). Workers get a
+    child logger bound to queue, job id, org id and request id.
+
+36. **2026-11-07: Helper signatures match Section 4.1 exactly.** `withOrg(orgId, work)`,
+    `withTransaction(work)` and `setOrg(client, orgId)` use a module-level pool (`src/db/pool.js`,
+    connected as `resolvd_app`). `setOrg` rejects anything that isn't a positive integer.
+    `createApp({ pool, jobs, logger, mountRoutes })` takes optional dependencies: tests inject a dead
+    pool (to simulate Postgres being down), fake or real jobs, a capturing logger, and test-only routes.
+
+37. **2026-11-07: helmet's default CSP is kept, and `/api/docs` is mounted after helmet.** Plan Section
+    14.4 says to mount docs before helmet or configure the CSP. Checked: swagger-ui-express 5 loads its
+    scripts from files (no inline script), and its inline `<style>` is allowed by helmet's default
+    `style-src 'self' https: 'unsafe-inline'`. So no CSP exception is needed. The OpenAPI document is
+    also served as JSON at `/api/docs/openapi.json`.
+
+38. **2026-11-07: Error codes (ScreenGuide defines them first; Resolvd should copy).** Section 4.1 fixes
+    the error shape and the 23505 → 409 and 23503 → 400 mapping, but not the code strings:
+    - `CONFLICT` (23505), `INVALID_REFERENCE` (23503), `VALIDATION_ERROR` (with
+      `details: [{ location, path, message }]`);
+    - `INVALID_JSON` (400), `PAYLOAD_TOO_LARGE` (413), `ROUTE_NOT_FOUND` / `NOT_FOUND` (404);
+    - `UNAUTHORIZED`, `FORBIDDEN`, `RATE_LIMITED` (429), `INTERNAL_ERROR` (500, generic message, logged
+      with the request id).
+
+    Rate-limit rejections go through the same error handler, so they use the same shape.
+
+39. **2026-11-07: Idempotency details** (plan Section 8.4 left these open):
+    - The request hash is SHA-256 of the method, the full path with its query string, and the body as
+      JSON with keys sorted, so key order doesn't matter.
+    - Keys are compared in lower case and scoped to `(org, user)`.
+    - 2xx and 4xx responses are stored and replayed, with the header `Idempotent-Replayed: true`.
+    - 5xx responses, and handlers that finish without `res.json`, release the key so a retry runs again.
+    - An `in_progress` key older than 5 minutes is treated as abandoned (for example after a crash) and
+      reclaimed, instead of returning 409 until the hourly purge.
+    - The key is claimed in its own short transaction before the handler runs, so a concurrent duplicate
+      sees it as in progress.
+
+40. **2026-11-07: Rate limiting uses express-rate-limit's in-memory store, so limits are per instance.**
+    This is fine on one Render instance. To scale horizontally, plug in a shared store through the
+    `store` option: a Postgres-backed store (a published one, or a small custom store on a table, the
+    natural choice since there's no Redis) or Redis. All four limiters are built in
+    `src/middleware/rateLimits.js`. The general limiter (300/min per IP on `/api`) is active now. Login,
+    register and ws-ticket limiters are defined and get attached in Phases 3 and 5. `trust proxy` is
+    `1` (one proxy hop on Render), so `req.ip` is the client's IP.
+
+41. **2026-11-07: `env.js` rules and one new variable.** Validation: `JWT_SECRET` must be at least 96
+    hex characters (48 bytes, as `.env.example` says); `ENCRYPTION_KEY` must decode to exactly 32 bytes;
+    `DATABASE_URL` must be a `postgres://` URL; `PUBLIC_WS_URL` must be `ws://`/`wss://`; empty values
+    count as unset. Errors list variable names, never values. Provider keys stay optional; production
+    requirements get added with each feature. **`LOG_LEVEL` is new** (not in Section 20; default
+    `info`, `silent` in tests) and is in `.env.example`.
+
+42. **2026-11-07: Tests use fixed test-only secrets.** `vitest.config.js` sets `JWT_SECRET`,
+    `ENCRYPTION_KEY`, `CLIENT_ORIGIN`, `PUBLIC_WS_URL` and blank provider keys, and takes only the
+    database credentials from `.env`. Tests never see real secrets, and CI needs no extra variables.
+
+43. **2026-11-07: Startup and shutdown.** The server listens on `127.0.0.1` in development and
+    `0.0.0.0` in production (Render), with no `HOST` variable. If pg-boss can't start (database not
+    reachable yet), the API keeps serving, `/api/ready` returns 503, and it retries every 15 s instead
+    of crash-looping. Shutdown lives in `src/shutdown.js` so it can be unit-tested (Windows can't send a
+    real SIGTERM to test it): close HTTP → stop jobs (10 s grace) → `pool.end()` → exit 0, with a forced
+    exit 1 after 20 s. Phase 5 inserts the WebSocket step.
+
+44. **2026-11-07: Log redaction is broader than Section 14.4's list.** As well as cookie, authorization,
+    `*.password`, `*.frame` and `*.apiKey`, it also redacts `set-cookie`, `*.passwordHash`, `*.token`,
+    `*.ticket`, `*.secret`, `*.audio`, `*.transcript` and `*.content`, the field that holds message text.
+    Tests check that passwords, frames, API keys and cookies never appear in log output.
+
+45. **2026-11-07: `/api/ready` checks.** The database check is `pool.query('SELECT 1')`. It's not a
+    tenant query (it reads no table), so it doesn't need `withOrg`. Jobs are checked by a pg-boss queue
+    lookup. Each check times out after 2 s, and either one being down returns 503 with
+    `{ status: 'unavailable', database, jobs }`.
