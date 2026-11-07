@@ -73,21 +73,48 @@ describe('RLS as resolvd_app (acceptance)', () => {
     expect(counts).toEqual({ inside: 3, after: 0 });
   });
 
+  // Guard for the per-table checks below: they only prove something if both orgs have data.
+  it.each(TENANT_TABLES)('%s: the seed has rows for both Acme and Globex', async (table) => {
+    const counts = await withOwnerClient(async (c) => {
+      const r = await c.query(
+        `SELECT organization_id, count(*)::int AS n FROM ${table}
+         WHERE organization_id = ANY($1) GROUP BY organization_id`,
+        [[ids.acme.id, ids.globex.id]],
+      );
+      return Object.fromEntries(r.rows.map((x) => [x.organization_id, x.n]));
+    });
+    expect(counts[ids.acme.id], 'Acme rows').toBeGreaterThan(0);
+    expect(counts[ids.globex.id], 'Globex rows').toBeGreaterThan(0);
+  });
+
   it.each(TENANT_TABLES)('%s: 0 rows with no org set', async (table) => {
     const { rowCount } = await withAppClient((c) => c.query(`SELECT * FROM ${table}`));
     expect(rowCount).toBe(0);
   });
 
-  it.each(TENANT_TABLES)('%s: with Globex set, never returns an Acme row', async (table) => {
-    const rows = await withAppClient((c) =>
-      inRolledBackTx(
-        c,
-        ids.globex.id,
-        async () => (await c.query(`SELECT organization_id FROM ${table}`)).rows,
-      ),
-    );
-    expect(rows.every((r) => r.organization_id === ids.globex.id)).toBe(true);
-  });
+  it.each(TENANT_TABLES)(
+    "%s: each org sees its own rows and never the other org's",
+    async (table) => {
+      for (const [own, other] of [
+        ['acme', 'globex'],
+        ['globex', 'acme'],
+      ]) {
+        const rows = await withAppClient((c) =>
+          inRolledBackTx(
+            c,
+            ids[own].id,
+            async () => (await c.query(`SELECT organization_id FROM ${table}`)).rows,
+          ),
+        );
+        expect(rows.length, `${own} sees its own ${table} rows`).toBeGreaterThan(0);
+        expect(
+          rows.some((r) => r.organization_id === ids[other].id),
+          `${own} sees ${other}'s ${table} rows`,
+        ).toBe(false);
+        expect(rows.every((r) => r.organization_id === ids[own].id)).toBe(true);
+      }
+    },
+  );
 
   it('organizations: only your own org is visible', async () => {
     const result = await withAppClient(async (c) => {

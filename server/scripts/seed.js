@@ -1,6 +1,8 @@
 // seed.js: seeds the two test organizations, Acme Corp and Globex (users, settings, preferences,
-// sessions with messages and steps, one escalation each). Runs as resolvd_owner in one transaction.
+// sessions with messages and steps, one escalation each, and at least one row in every other
+// tenant table). Runs as resolvd_owner in one transaction.
 // Safe to rerun: existing Acme/Globex data is removed first. Other orgs are never touched.
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import bcrypt from 'bcryptjs';
 import { Client } from 'pg';
@@ -147,8 +149,8 @@ async function seedOrg(client, org, passwordHash) {
   const orgId = orgRows[0].id;
 
   await client.query(
-    `INSERT INTO org_settings (organization_id, plan, retention_days, it_contact_email)
-     VALUES ($1, 'team', 90, $2)`,
+    `INSERT INTO org_settings (organization_id, plan, retention_days, save_snapshots, it_contact_email)
+     VALUES ($1, 'team', 90, TRUE, $2)`,
     [orgId, org.itContactEmail],
   );
 
@@ -260,7 +262,7 @@ async function seedOrg(client, org, passwordHash) {
   );
 
   // 3. Active email session (in progress).
-  await insertSession(client, {
+  const activeId = await insertSession(client, {
     orgId,
     userId: userIds.user3,
     status: 'active',
@@ -279,7 +281,64 @@ async function seedOrg(client, org, passwordHash) {
     [orgId, userIds.admin, String(orgId), JSON.stringify({ seeded: true })],
   );
 
+  await seedRemainingTables(client, { org, orgId, userIds, resolvedId, activeId });
+
   return { orgId, userIds };
+}
+
+// A 1×1 grey JPEG: stands in for a downscaled step snapshot (synthetic, not a real screen).
+const PLACEHOLDER_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=',
+  'base64',
+);
+
+const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+
+/**
+ * Give the tables the sessions above don't fill at least one row per org, so every tenant table
+ * has data for both orgs and the RLS isolation tests can't pass trivially.
+ * @param {import('pg').ClientBase} client
+ */
+async function seedRemainingTables(client, { org, orgId, userIds, resolvedId, activeId }) {
+  // Open invitation (token is random and unknown; only its hash is stored).
+  await client.query(
+    `INSERT INTO invitations (organization_id, email, role, token_hash, invited_by, expires_at)
+     VALUES ($1, $2, 'end_user', $3, $4, NOW() + INTERVAL '7 days')`,
+    [orgId, `newhire@${org.slug}.test`, sha256(randomBytes(32)), userIds.admin],
+  );
+
+  // Step snapshot for the first completed step. Snapshots are only stored when the org has the
+  // setting on, so the seed orgs have save_snapshots = true (see org_settings above).
+  const { rows: stepRows } = await client.query(
+    'SELECT id FROM session_steps WHERE session_id = $1 AND step_index = 0',
+    [resolvedId],
+  );
+  await client.query(
+    'INSERT INTO step_snapshots (organization_id, step_id, image) VALUES ($1, $2, $3)',
+    [orgId, stepRows[0].id, PLACEHOLDER_JPEG],
+  );
+
+  // Resolvd connector configured but disabled, with no API key stored.
+  await client.query(
+    `INSERT INTO integration_settings (organization_id, base_url, enabled)
+     VALUES ($1, $2, FALSE)`,
+    [orgId, `https://resolvd.${org.slug}.test`],
+  );
+
+  // A completed idempotent request (as if user3 created the active session).
+  await client.query(
+    `INSERT INTO idempotency_keys
+       (organization_id, user_id, key, request_hash, status, response_code, response_body)
+     VALUES ($1, $2, $3, $4, 'completed', 201, $5)`,
+    [orgId, userIds.user3, randomUUID(), sha256('seed-request'), JSON.stringify({ id: activeId })],
+  );
+
+  // An already-used, expired WebSocket ticket for the active session.
+  await client.query(
+    `INSERT INTO ws_tickets (token_hash, organization_id, user_id, session_id, expires_at, used_at)
+     VALUES ($1, $2, $3, $4, NOW() - INTERVAL '4 minutes', NOW() - INTERVAL '5 minutes')`,
+    [sha256(randomBytes(32)), orgId, userIds.user3, activeId],
+  );
 }
 
 /**

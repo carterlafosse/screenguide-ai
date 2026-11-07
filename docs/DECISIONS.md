@@ -179,6 +179,17 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     `db/seeds/users.js`), hashed once per run with bcryptjs cost 12 and reused for all 12 users, which
     keeps the seed around 1.5 s. Emails use the reserved `.test` domain. The seed runs as the owner in one
     transaction and can be rerun: it deletes Acme's and Globex's rows first and never touches other orgs.
+    **Every tenant table gets at least one row for each org**, so the per-table RLS checks in
+    `rls.test.js` test real data, and a guard test fails if any table is ever left empty. The previously
+    empty tables get:
+    - `invitations`: an open invite (random token, only the hash stored);
+    - `step_snapshots`: a synthetic 1×1 JPEG, not a real screen;
+    - `integration_settings`: a disabled Resolvd connector with no API key;
+    - `idempotency_keys`: a completed request;
+    - `ws_tickets`: an already-used, expired ticket.
+
+    Because snapshots are only stored when an org turns the setting on (privacy rule), both seed orgs
+    have `org_settings.save_snapshots = true`. The column default stays `false` for real orgs.
 
 30. **2026-11-07: Migration runner extras.** Only files named `NNN_name.sql` are applied, so the README
     is skipped. A PostgreSQL advisory lock serializes concurrent runs, such as two deploys starting at
