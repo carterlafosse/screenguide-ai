@@ -278,8 +278,15 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     - The request hash is SHA-256 of the method, the full path with its query string, and the body as
       JSON with keys sorted, so key order doesn't matter.
     - Keys are compared in lower case and scoped to `(org, user)`.
-    - 2xx and 4xx responses are stored and replayed, with the header `Idempotent-Replayed: true`.
-    - 5xx responses, and handlers that finish without `res.json`, release the key so a retry runs again.
+    - **Stored and replayed** (with the header `Idempotent-Replayed: true`): 2xx and business-logic 4xx,
+      such as a 400 `BAD_REQUEST` from a service rule, 404, 409 and 422. These are real outcomes of the
+      request, so a repeat gets the same answer and the handler runs only once.
+    - **Not stored; the key is released, so a retry with the same key runs fresh:** 5xx, 400
+      `VALIDATION_ERROR`, 401, 403 and 429. These describe the request's circumstances (bad input, not
+      signed in, no permission, rate limited, server trouble) rather than an outcome. Once the cause is
+      fixed, the client can retry the same request with the same key. Handlers that finish without
+      `res.json` also release the key. (Changed 2026-11-07: the first draft stored every 4xx.) The rule
+      is `shouldStoreResponse()` in `src/middleware/idempotent.js`, covered by unit and HTTP tests.
     - An `in_progress` key older than 5 minutes is treated as abandoned (for example after a crash) and
       reclaimed, instead of returning 409 until the hourly purge.
     - The key is claimed in its own short transaction before the handler runs, so a concurrent duplicate

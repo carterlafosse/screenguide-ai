@@ -11,6 +11,16 @@ import { AppError } from '../../src/utils/AppError.js';
 import { getSeedIds, withOwnerClient } from '../dbHelpers.js';
 import { captureLogger, waitFor } from '../helpers.js';
 
+const ERRORS = {
+  validation: () => AppError.validation([{ location: 'body', path: 'name', message: 'Required' }]),
+  unauthorized: () => AppError.unauthorized(),
+  forbidden: () => AppError.forbidden(),
+  rateLimited: () => AppError.tooManyRequests(),
+  badRequest: () => AppError.badRequest('That printer is not in your organization'),
+  notFound: () => AppError.notFound('Session not found'),
+  conflict: () => AppError.conflict('Session already ended', 'SESSION_ENDED'),
+};
+
 let ids;
 let calls = 0;
 let release;
@@ -33,6 +43,9 @@ const app = createApp({
       if (req.body.wait) await gate;
       if (req.body.fail) throw new Error('server bug');
       if (req.body.bad) throw AppError.badRequest('Bad thing');
+      // A header (not the body) picks an error, so a retry can send the identical request.
+      const make = ERRORS[req.get('x-test-error')];
+      if (make) throw make();
       res.status(201).json({ n, name: req.body.name });
     });
   },
@@ -42,11 +55,62 @@ beforeAll(async () => {
   ids = await getSeedIds();
 });
 
-const post = (key, body, user = 'user1') => {
+const post = (key, body, user = 'user1', error = undefined) => {
   const req = request(app).post('/api/test/things').set('x-test-user', user);
   if (key) req.set('Idempotency-Key', key);
+  if (error) req.set('x-test-error', error);
   return req.send(body);
 };
+
+const storedRows = (key) =>
+  withOwnerClient(
+    async (c) =>
+      (await c.query('SELECT status, response_code FROM idempotency_keys WHERE key = $1', [key]))
+        .rows,
+  );
+
+describe('which responses are stored', () => {
+  it.each([
+    ['validation', 400],
+    ['unauthorized', 401],
+    ['forbidden', 403],
+    ['rateLimited', 429],
+  ])('%s (%i) is not stored: the key is released and a retry runs fresh', async (error, status) => {
+    const key = randomUUID();
+    const body = { name: `retry-${error}` };
+    const before = calls;
+
+    const first = await post(key, body, 'user1', error);
+    expect(first.status).toBe(status);
+    expect(await storedRows(key)).toEqual([]);
+
+    // Same key, identical request, cause fixed: the handler runs again and this result is stored.
+    const retry = await post(key, body);
+    expect(retry.status).toBe(201);
+    expect(retry.headers['idempotent-replayed']).toBeUndefined();
+    expect(calls - before).toBe(2);
+    expect(await storedRows(key)).toEqual([{ status: 'completed', response_code: 201 }]);
+  });
+
+  it.each([
+    ['badRequest', 400],
+    ['notFound', 404],
+    ['conflict', 409],
+  ])('business %s (%i) is stored and replayed; the handler runs once', async (error, status) => {
+    const key = randomUUID();
+    const body = { name: `stored-${error}` };
+    const before = calls;
+
+    const first = await post(key, body, 'user1', error);
+    const replay = await post(key, body, 'user1', error);
+    expect(first.status).toBe(status);
+    expect(replay.status).toBe(status);
+    expect(replay.body).toEqual(first.body);
+    expect(replay.headers['idempotent-replayed']).toBe('true');
+    expect(calls - before).toBe(1);
+    expect(await storedRows(key)).toEqual([{ status: 'completed', response_code: status }]);
+  });
+});
 
 describe('idempotent()', () => {
   it('requires an Idempotency-Key header that is a UUID', async () => {

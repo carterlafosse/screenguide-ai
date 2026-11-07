@@ -200,9 +200,10 @@ oversized bodies → 413. Anything unexpected is logged with the request id and 
 ### Idempotency, audit and secrets
 
 - **`idempotent()`** (unsafe POSTs): needs an `Idempotency-Key` UUID. It claims the key in its own short
-  transaction, stores the JSON response for 2xx/4xx and replays it for repeats. A different body with
-  the same key gets 422, a duplicate while the first request is still running gets 409, and 5xx results
-  aren't stored.
+  transaction, stores the JSON response for 2xx and business-logic 4xx (e.g. 404, 409), and replays it
+  for repeats. A different body with the same key gets 422, and a duplicate while the first request is
+  still running gets 409. 5xx, 400 `VALIDATION_ERROR`, 401, 403 and 429 aren't stored: the key is
+  released, so a retry with the same key runs fresh.
 - **`recordAudit(client, event)`** writes to `audit_events` on the caller's transaction client, so the
   audit row commits or rolls back with the change. Only the actions in `AUDIT_ACTIONS` are accepted.
 - **`src/utils/crypto.js`**: AES-256-GCM with `ENCRYPTION_KEY`, stored as `iv:authTag:ciphertext`.
