@@ -37,3 +37,20 @@ Postgres roles belong to the whole server, not just one database. Resolvd will u
 
 **One thing I'd explain in an interview:**
 - My database setup script is idempotent: Re-running my setup script is safe, it gives the API the least access it needs, and it keeps passwords out of the code. CI proves the first part on every push.
+
+## Phase 1: Database, migrations and RLS (2026-11-07)
+
+**What was built:**
+- 
+
+**What I tested by hand:**
+- 
+
+**Decisions or changes from the plan:**
+- 
+
+**Concept checks (in my own words):**
+- 
+
+**One thing I'd explain in an interview:**
+- 
