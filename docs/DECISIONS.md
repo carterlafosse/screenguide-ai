@@ -416,3 +416,49 @@ compatibility check are recorded in `docs/merge-plan.md`; these entries record w
       stays quiet. `migrate()` keeps its advisory lock, app-role refusal and `dir` option (entry 30).
     - Supersedes the slug, password and export details in entry 29, and entry 32's wording (the guard
       stays).
+
+49. **2026-11-11: Phase 3 (auth) must follow Resolvd's spec from the start** (RESOLVD_PLAN Phase 3).
+    These override the looser wording in ScreenGuide's plan Sections 4.1 and 8.1:
+    - **Middleware file:** `src/middleware/auth.js` exports both `authenticate` and `requireRole`
+      (ScreenGuide's plan listed two separate files).
+    - **`req.user = { id, orgId, role, name, email }`**, loaded from the database inside
+      `withOrg(payload.org)` on every request. Missing or inactive user → 401. A bad or expired JWT → 401
+      "Session expired".
+    - **Login:**
+      - Find the user with `auth_find_user_by_email` (no org context yet).
+      - Unknown email → compare against a dummy hash made with `bcrypt.hashSync` at startup (not
+        hardcoded), then 401 "Invalid email or password". An inactive user gets the same 401.
+      - Locked (`locked_until > now`) → 401 "Account temporarily locked. Try again later."
+      - Wrong password → `SELECT auth_record_login_failure(user.id, 5, 15)` **outside any transaction
+        that will roll back**, then the same 401.
+      - Success → inside `withOrg`, reset attempts and the lock and set `last_login_at`, then sign
+        `{ sub, org }` with `expiresIn: '8h'`.
+      - Login limiter: 10 per 15 minutes per IP.
+    - **Logout** clears the cookie with the same options and returns **204**. `/me` returns the user
+      plus organization `name` and `slug`; ScreenGuide adds preferences and settings to that, as planned.
+    - **Register (`POST /api/auth/register-organization`):**
+      - Fields: `organizationName` 2–100, `slug` `^[a-z0-9-]{3,50}$`, `name` 1–100, `email` (email,
+        lowercased), `password` (10–72, a letter and a number).
+      - Unique violations are mapped by `err.constraint` to 409 "That email is already registered" or
+        "That URL name is taken".
+      - Runs in one `withTransaction`: `create_organization()`, then `setOrg`, then the admin insert.
+        ScreenGuide then adds `org_settings` and admin preferences. It doesn't add categories or SLA
+        policies, because it has neither table (merge task, see `docs/merge-plan.md`).
+      - Returns 201 and sets the cookie.
+
+50. **2026-11-11: Test setup kept as is (Carter's decision D).** Resolvd loads `server/.env.test` when
+    `NODE_ENV=test` (from a `.env.test.example`). ScreenGuide keeps deriving the `screenguide_test` URLs
+    from `.env` and setting fixed test-only secrets, now including `SEED_PASSWORD`, in
+    `vitest.config.js` (entries 28 and 42). It needs no extra file, and tests can't reach dev data.
+    Noted in `docs/merge-plan.md` as a known difference to settle when the test suites merge.
+
+51. **2026-11-11: Resolvd integration wire format (Carter's decision for difference #24).** This
+    overrides ScreenGuide plan Section 4.5. It's what `docs/resolvd-integration.md` will specify in
+    Phase 9, and what `ResolvdHttpSink` and the mock Resolvd server will implement:
+    - `POST /api/integrations/tickets` answers in **snake_case**: `201 { id, display_id }`
+      (`display_id` like `RES-1042`), not `{ id, ticketNumber, displayId }`.
+    - The external session reference is sent and stored as **`external_ref`** (Resolvd adds `source`
+      and `external_ref` columns to `tickets`), not `externalId`.
+    - **Idempotent on `(organization_id, source, external_ref)`.** A repeat returns the existing ticket.
+      The `TicketSink` interface's own field names inside ScreenGuide may stay camelCase; only the wire
+      format is fixed here.
