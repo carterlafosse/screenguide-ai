@@ -187,3 +187,52 @@ startup/shutdown behaviour, broader log redaction, readiness checks.
 ### Measurements
 - Server test run: ~29 s for 155 tests (pg-boss polling and a retry with backoff are most of it).
 - `/api/ready` locally: database and jobs checks each answer well within their 2 s timeout.
+
+## Resolvd alignment (between Phases 2 and 3), done 2026-11-11
+
+Compatibility check re-run against Resolvd's real Phase 1 code (`198e1f8`). Every difference was
+fixed, recorded as a binding later-phase rule, or kept on purpose with Carter's agreement. Full
+results are in `docs/merge-plan.md`.
+
+### Changed
+- **Shared migrations** (one-time in-place edit, DECISIONS 46): `002`/`003` are byte-identical to
+  Resolvd's (triggers `organizations_updated_at`, `users_updated_at`). `007` matches Resolvd's apart
+  from Resolvd-only tables: `org_self` `USING` only, 7-column `auth_find_user_by_email`, new
+  `auth_record_login_failure … RETURNS VOID`, `USAGE` on all sequences. `001` uses Resolvd's text
+  minus the ticket enums.
+- **HTTP** (DECISIONS 47):
+  - `/api/health` checks the database (`ok`/`up` or 503 `degraded`/`down`); `/api/ready` 503 is
+    `degraded`;
+  - 404 `NOT_FOUND`; any `ZodError` → 400 with flattened details (internal validation throws plain
+    errors); `22P02` → 400 `INVALID_INPUT`;
+  - `isProd` export; `TRUST_PROXY_HOPS`.
+- **Seed and scripts** (DECISIONS 48): Resolvd's `users.js` (slug `acme-corp`); `SEED_PASSWORD` from
+  `.env`; `TRUNCATE` reset; code in `scripts/lib/` with two-line runners.
+- **CI** uses `postgres:18`. The README covers clearing the setup command from PowerShell history,
+  the `.env` values needed, and resetting databases built before this change.
+- **Recorded for later phases:** Phase 3 auth rules from Resolvd (DECISIONS 49); test setup kept
+  (DECISIONS 50); integration wire format in snake_case with `external_ref` (DECISIONS 51).
+
+### Verified (Windows 11, Node 26.13.0, PostgreSQL 18.6)
+- `diff` against Resolvd: `002`, `003` and `db/seeds/users.js` identical; `001` and `007` differ only
+  by the Resolvd-only types and tables.
+- `server`: lint clean; `npm test` **185 passed** (13 files) in ~25 s. New tests cover:
+  - trigger names, function signatures and return types, `org_self` without `WITH CHECK`, `USAGE` on
+    every sequence;
+  - `auth_record_login_failure` counting, then locking and resetting at 5;
+  - `/api/health` up and down, `NOT_FOUND`, `ZodError` → 400 with flattened details, `22P02`;
+  - `TRUST_PROXY_HOPS`;
+  - seed guards (password, connection string, production).
+- `client`: unchanged (lint clean, 2 tests).
+- `screenguide_dev` reset (both schemas dropped and recreated) and re-migrated: 17 files; a second run
+  says up to date. `npm run seed` without `SEED_PASSWORD` exits 1 with a clear message. The seed
+  runner, run against `screenguide_test` with a throwaway password, seeded 2 orgs and 12 users and
+  printed the login table with no password in the output.
+- **Not done:** `screenguide_dev` is migrated but **not seeded**. Carter adds `SEED_PASSWORD` to
+  `server/.env`, then runs `npm run seed`.
+- CI: not run (nothing pushed).
+
+### Known issues
+- `CLAUDE.md` still says Resolvd hasn't been built and not to look for its repo; it's Carter's file,
+  so it hasn't been edited (noted in `merge-plan.md`).
+- `npm audit`: unchanged (4 moderate, dev-only; production 0).
