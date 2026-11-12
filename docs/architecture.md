@@ -69,7 +69,7 @@ advisory lock stops two runs overlapping.
 
 | Files | Rule |
 |---|---|
-| `001`–`003`, `007` | **Mirror Resolvd exactly** (same numbers, names and table shapes). Never edited for ScreenGuide's needs. |
+| `001`–`003`, `007` | **Copies of Resolvd's files** (`002`, `003` byte-identical; `001` and `007` leave out Resolvd-only types and tables). They only change when Resolvd's do, by copying. Tests pin the signatures, trigger names and grants. |
 | `004`–`006` | Intentionally unused (Resolvd's tickets/categories/comments), so the histories line up. |
 | `100`+ | ScreenGuide's own schema. **Never alters `organizations` or `users`**; extra org/user data lives in `org_settings` and `user_preferences`. At merge time only these move into Resolvd, renumbered. |
 
@@ -125,7 +125,8 @@ definer function.
 
 | Function | Why it needs to bypass RLS |
 |---|---|
-| `auth_find_user_by_email(p_email)` | Login: the org isn't known until the user is found |
+| `auth_find_user_by_email(p_email)` | Login: the org isn't known until the user is found (returns Resolvd's 7 columns) |
+| `auth_record_login_failure(p_user_id, p_max_attempts, p_lock_minutes)` | Login lockout: saves the failed attempt (and the 15-minute lock at 5) outside any transaction that rolls back; `RETURNS VOID` |
 | `create_organization(p_name, p_slug)` | Registration: the org doesn't exist yet |
 | `accept_invitation(token_hash, name, password_hash)` | The invitee isn't signed in to any org |
 | `consume_ws_ticket(token_hash)` | WebSocket upgrade: atomic single use, before the org is known |
