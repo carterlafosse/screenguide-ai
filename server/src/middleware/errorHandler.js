@@ -1,11 +1,14 @@
-// errorHandler.js: the last middleware. Turns any error into `{ error: { code, message, details? } }`.
-// AppError → its own status; known PostgreSQL errors → 409/400; body-parser errors → 400/413;
+// errorHandler.js: the last middleware. Turns any error into `{ error: { code, message, details? } }`
+// (same rules as Resolvd): AppError → its own status; ZodError → 400 VALIDATION_ERROR with the
+// flattened issues; PostgreSQL 23505 → 409, 23503/22P02 → 400; body-parser errors → 400/413/415;
 // anything else is logged with the request id and answered with a generic 500 (no internals leak).
+import { ZodError, z } from 'zod';
 import { AppError } from '../utils/AppError.js';
 
 /** PostgreSQL SQLSTATE codes we translate (https://www.postgresql.org/docs/current/errcodes-appendix.html). */
 const PG_UNIQUE_VIOLATION = '23505';
 const PG_FOREIGN_KEY_VIOLATION = '23503';
+const PG_INVALID_TEXT_REPRESENTATION = '22P02';
 
 /**
  * Map any thrown value to an AppError (or null if it's unexpected).
@@ -14,11 +17,18 @@ const PG_FOREIGN_KEY_VIOLATION = '23503';
  */
 export function toAppError(err) {
   if (err instanceof AppError) return err;
+  if (err instanceof ZodError) {
+    // { formErrors: string[], fieldErrors: { [field]: string[] } }: Resolvd's details shape.
+    return AppError.validation(z.flattenError(err));
+  }
   if (err?.code === PG_UNIQUE_VIOLATION) {
     return AppError.conflict('That already exists', 'CONFLICT');
   }
   if (err?.code === PG_FOREIGN_KEY_VIOLATION) {
     return AppError.badRequest('A referenced item does not exist', undefined, 'INVALID_REFERENCE');
+  }
+  if (err?.code === PG_INVALID_TEXT_REPRESENTATION) {
+    return AppError.badRequest('Invalid input', undefined, 'INVALID_INPUT');
   }
   // body-parser (express.json) errors carry `type` and `status`.
   if (err?.type === 'entity.parse.failed') {

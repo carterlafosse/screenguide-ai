@@ -89,7 +89,9 @@ describe('job queue (pg-boss as resolvd_app)', () => {
   }, 20000);
 
   it('requires orgId and requestId on every payload, and a known queue', async () => {
-    await expect(jobs.send(QUEUES.NOOP, { requestId: randomUUID() })).rejects.toThrow();
+    await expect(jobs.send(QUEUES.NOOP, { requestId: randomUUID() })).rejects.toThrow(
+      /invalid payload/,
+    );
     await expect(jobs.send(QUEUES.NOOP, { orgId: ids.acme.id })).rejects.toThrow();
     await expect(jobs.send('no.such.queue', envelope())).rejects.toThrow(/Unknown queue/);
   });

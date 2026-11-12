@@ -16,6 +16,9 @@ const BASE64_32_BYTES = (v) =>
 export const envSchema = z.object({
   NODE_ENV: withDefault(z.enum(['development', 'test', 'production']), 'development'),
   PORT: withDefault(z.coerce.number().int().min(1).max(65535), 4001),
+  // Proxy hops in front of the API (Vercel → Render). Sets Express 'trust proxy' so req.ip, and
+  // therefore rate limiting, sees the real client address. Same variable as Resolvd.
+  TRUST_PROXY_HOPS: withDefault(z.coerce.number().int().min(0).max(10), 1),
   LOG_LEVEL: withDefault(
     z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']),
     'info',
@@ -77,3 +80,6 @@ function loadOrExit() {
 }
 
 export const env = loadOrExit();
+
+/** True in production (secure cookies, 0.0.0.0, no pretty logs). Same export as Resolvd. */
+export const isProd = env.NODE_ENV === 'production';

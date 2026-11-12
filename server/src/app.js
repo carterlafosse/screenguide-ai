@@ -32,7 +32,7 @@ export function createApp({
   mountRoutes,
 } = {}) {
   const app = express();
-  app.set('trust proxy', 1); // behind Render's / Vercel's proxy: req.ip is the client's address
+  app.set('trust proxy', env.TRUST_PROXY_HOPS); // so req.ip is the client's address behind proxies
 
   app.use(requestId);
   app.use(helmet());

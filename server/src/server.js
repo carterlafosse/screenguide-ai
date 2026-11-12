@@ -1,6 +1,6 @@
 // server.js: starts the API: HTTP server, then the pg-boss job queue, and wires SIGTERM/SIGINT to the
 // graceful shutdown sequence in shutdown.js. Phase 5 adds the WebSocket server.
-import { env } from './config/env.js';
+import { env, isProd } from './config/env.js';
 import { createApp } from './app.js';
 import { pool } from './db/pool.js';
 import { createJobs } from './jobs/index.js';
@@ -13,7 +13,7 @@ const jobs = createJobs({ connectionString: env.DATABASE_URL, logger });
 const app = createApp({ pool, jobs, logger });
 
 // Render needs 0.0.0.0; locally stay on loopback (Resolvd uses localhost:4000).
-const host = env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1';
+const host = isProd ? '0.0.0.0' : '127.0.0.1';
 const server = app.listen(env.PORT, host, () => {
   logger.info(`ScreenGuide API listening on http://${host}:${env.PORT}`);
 });

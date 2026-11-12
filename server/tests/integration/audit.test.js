@@ -86,7 +86,8 @@ describe('recordAudit', () => {
       withOrg(ids.acme.id, (client) =>
         recordAudit(client, { orgId: ids.acme.id, action: 'user.hacked', requestId }),
       ),
-    ).rejects.toThrow();
+      // A plain Error (500), not a ZodError, which the error handler would answer as a 400.
+    ).rejects.toThrow(/recordAudit: invalid event/);
     expect(await findByRequestId(requestId)).toEqual([]);
   });
 

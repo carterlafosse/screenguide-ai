@@ -16,6 +16,7 @@ describe('parseEnv', () => {
     expect(env).toMatchObject({
       NODE_ENV: 'development',
       PORT: 4001,
+      TRUST_PROXY_HOPS: 1,
       AI_MOCK: false,
       AI_MODEL_FAST: 'claude-haiku-5-5',
       DISABLE_PLAN_LIMITS: false,
@@ -40,6 +41,7 @@ describe('parseEnv', () => {
     ['PUBLIC_WS_URL', 'http://127.0.0.1:4001/ws'],
     ['NODE_ENV', 'staging'],
     ['PORT', '99999'],
+    ['TRUST_PROXY_HOPS', '-1'],
   ])('rejects %s = %s', (name, value) => {
     expect(() => parseEnv({ ...VALID, [name]: value })).toThrow(EnvError);
     try {

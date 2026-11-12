@@ -53,6 +53,12 @@ const auditInput = z.object({
  *   requestId?: string | null, ip?: string | null }} event
  */
 export async function recordAudit(client, event) {
-  const row = auditInput.parse(event);
+  const result = auditInput.safeParse(event);
+  // A bad audit event is a bug in our code, not bad user input, so it must surface as a 500
+  // (a raw ZodError would be answered as a 400 VALIDATION_ERROR).
+  if (!result.success) {
+    throw new Error(`recordAudit: invalid event: ${result.error.message}`);
+  }
+  const row = result.data;
   return insertAuditEvent(client, row);
 }

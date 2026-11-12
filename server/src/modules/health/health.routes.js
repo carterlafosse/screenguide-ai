@@ -1,7 +1,9 @@
-// health.routes.js: liveness and readiness (plan Section 8.7).
-//   GET /api/health  → 200 { status: 'ok' } without touching the database (is the process alive?)
-//   GET /api/ready   → { status, database, jobs }; 503 if the database or the job queue is down.
-//                      Render's health check points here.
+// health.routes.js: health and readiness.
+//   GET /api/health → SELECT 1 → 200 { status: 'ok', database: 'up' }, or
+//                     503 { status: 'degraded', database: 'down' }. Same contract as Resolvd's
+//                     health route; Render's health check points here.
+//   GET /api/ready  → ScreenGuide addition (plan Section 4.2): also checks the job queue →
+//                     { status, database, jobs }, 503 'degraded' if either is down.
 import { Router } from 'express';
 
 const CHECK_TIMEOUT_MS = 2000;
@@ -39,8 +41,12 @@ async function checkDatabase(pool) {
 export function healthRouter({ pool, jobs }) {
   const router = Router();
 
-  router.get('/health', (req, res) => {
-    res.json({ status: 'ok' });
+  router.get('/health', async (req, res) => {
+    const database = await checkDatabase(pool);
+    if (database === 'down') req.log?.warn({ database }, 'health check failed');
+    res
+      .status(database === 'up' ? 200 : 503)
+      .json({ status: database === 'up' ? 'ok' : 'degraded', database });
   });
 
   router.get('/ready', async (req, res) => {
@@ -53,7 +59,7 @@ export function healthRouter({ pool, jobs }) {
     if (!ready) req.log?.warn({ database, jobs: jobsState }, 'not ready');
     res
       .status(ready ? 200 : 503)
-      .json({ status: ready ? 'ok' : 'unavailable', database, jobs: jobsState });
+      .json({ status: ready ? 'ok' : 'degraded', database, jobs: jobsState });
   });
 
   return router;

@@ -108,7 +108,11 @@ export function createJobs({
      */
     async send(name, data, { client, ...options } = {}) {
       if (!queueNames.has(name)) throw new Error(`Unknown queue: ${name}`);
-      const payload = jobEnvelope.parse(data);
+      // A bad payload is a bug in our code: throw a plain Error (500), not a ZodError (400).
+      const parsed = jobEnvelope.safeParse(data);
+      if (!parsed.success)
+        throw new Error(`jobs.send(${name}): invalid payload: ${parsed.error.message}`);
+      const payload = parsed.data;
       return boss.send(name, payload, client ? { ...options, db: clientDb(client) } : options);
     },
   };

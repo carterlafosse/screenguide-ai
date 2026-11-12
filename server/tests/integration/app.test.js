@@ -40,6 +40,14 @@ const app = createApp({
     r.get('/test/boom', async () => {
       throw new Error('internal detail: connection string postgres://secret');
     });
+    r.get('/test/zod', async () => {
+      // A ZodError thrown anywhere in a request (not only from validate()) becomes a 400.
+      z.object({ email: z.email() }).parse({ email: 'not-an-email' });
+    });
+    r.get('/test/bad-int', async () => {
+      // '22P02' invalid text representation, e.g. a non-numeric id reaching an INT column.
+      await withOrg(ids.acme.id, (c) => c.query("SELECT 'abc'::int"));
+    });
     r.post(
       '/test/echo',
       validate({
@@ -125,22 +133,44 @@ describe('error translation', () => {
     expect(res.body.error.code).toBe('PAYLOAD_TOO_LARGE');
   });
 
-  it('unknown routes → 404 ROUTE_NOT_FOUND', async () => {
+  it('unknown routes → 404 NOT_FOUND (same code as Resolvd)', async () => {
     const res = await request(app).get('/api/nope');
     expect(res.status).toBe(404);
-    expect(res.body.error.code).toBe('ROUTE_NOT_FOUND');
+    expect(res.body.error).toEqual({ code: 'NOT_FOUND', message: 'No route for GET /api/nope' });
+  });
+
+  it('any ZodError → 400 VALIDATION_ERROR with flattened details (Resolvd shape)', async () => {
+    const res = await request(app).get('/api/test/zod');
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(res.body.error.details).toEqual({
+      formErrors: [],
+      fieldErrors: { email: [expect.any(String)] },
+    });
+  });
+
+  it('PostgreSQL invalid text representation (22P02) → 400 INVALID_INPUT', async () => {
+    const res = await request(app).get('/api/test/bad-int');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toEqual({ code: 'INVALID_INPUT', message: 'Invalid input' });
   });
 });
 
 describe('validate()', () => {
-  it('rejects invalid input with one detail per problem, across body and query', async () => {
-    const res = await request(app).post('/api/test/echo?n=abc').send({ name: '' });
+  it('rejects invalid input: 400 VALIDATION_ERROR with { formErrors, fieldErrors }', async () => {
+    const res = await request(app).post('/api/test/echo?n=5').send({ name: '' });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
-    expect(res.body.error.details.map((d) => `${d.location}.${d.path}`).sort()).toEqual([
-      'body.name',
-      'query.n',
-    ]);
+    expect(res.body.error.details).toEqual({
+      formErrors: [],
+      fieldErrors: { name: [expect.any(String)] },
+    });
+  });
+
+  it('checks params, then query, then body, and reports the first part that fails', async () => {
+    const res = await request(app).post('/api/test/echo?n=abc').send({ name: '' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body.error.details.fieldErrors)).toEqual(['n']);
   });
 
   it('passes parsed values on: body, coerced params, and query on req.validatedQuery', async () => {

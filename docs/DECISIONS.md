@@ -267,7 +267,9 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     `style-src 'self' https: 'unsafe-inline'`. So no CSP exception is needed. The OpenAPI document is
     also served as JSON at `/api/docs/openapi.json`.
 
-38. **2026-11-07: Error codes (ScreenGuide defines them first; Resolvd should copy).** Section 4.1 fixes
+38. **Partly superseded 2026-11-11 by entry 47** (`ROUTE_NOT_FOUND` → `NOT_FOUND`; validation details now
+    use Resolvd's flattened shape; Resolvd adopts the rest).
+    **2026-11-07: Error codes (ScreenGuide defines them first; Resolvd should copy).** Section 4.1 fixes
     the error shape and the 23505 → 409 and 23503 → 400 mapping, but not the code strings:
     - `CONFLICT` (23505), `INVALID_REFERENCE` (23503), `VALIDATION_ERROR` (with
       `details: [{ location, path, message }]`);
@@ -326,7 +328,8 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     `*.ticket`, `*.secret`, `*.audio`, `*.transcript` and `*.content`, the field that holds message text.
     Tests check that passwords, frames, API keys and cookies never appear in log output.
 
-45. **2026-11-07: `/api/ready` checks.** The database check is `pool.query('SELECT 1')`. It's not a
+45. **Updated 2026-11-11 by entry 47** (`/api/health` now checks the database; 503 says `degraded`).
+    **2026-11-07: `/api/ready` checks.** The database check is `pool.query('SELECT 1')`. It's not a
     tenant query (it reads no table), so it doesn't need `withOrg`. Jobs are checked by a pg-boss queue
     lookup. Each check times out after 2 s, and either one being down returns 503 with
     `{ status: 'unavailable', database, jobs }`.
@@ -363,3 +366,29 @@ compatibility check are recorded in `docs/merge-plan.md`; these entries record w
     policy (no `WITH CHECK`), and `USAGE` on every sequence. **From here on, 001–003 and 007 only change
     when Resolvd's do, and only by copying them.** Anyone with an older ScreenGuide database must reset
     it (README).
+
+47. **2026-11-11: HTTP conventions aligned with Resolvd.** Resolvd is the source of truth for shared
+    conventions, so these replace earlier ScreenGuide choices (entries 38 and 45, and plan Section 8.7's
+    no-database `/api/health`):
+    - **`GET /api/health`** runs `SELECT 1` and returns 200 `{ status: 'ok', database: 'up' }` or 503
+      `{ status: 'degraded', database: 'down' }`, exactly like Resolvd. Render's health check uses it.
+      `/api/ready` stays as ScreenGuide's addition (database + jobs); its 503 status word is now
+      `'degraded'` too. The client's "Waking up the server…" ping (plan Section 22.4) now also wakes
+      the database, which is fine.
+    - **404 code** is `NOT_FOUND` (was `ROUTE_NOT_FOUND`).
+    - **Any `ZodError` → 400 `VALIDATION_ERROR`** with `details: z.flattenError(err)`, i.e.
+      `{ formErrors, fieldErrors }`. That's Resolvd's `err.flatten()` output; Zod 4 deprecates the
+      method in favour of the function, with the same result.
+      - `validate()` checks params, then query, then body, and passes the first failure's `ZodError` on.
+        It previously listed every issue with its location.
+      - Because a raw `ZodError` now means "client's fault", `recordAudit()` and `jobs.send()` throw a
+        plain `Error` for invalid input, so a bug in our code is still a 500.
+    - **`22P02` → 400 `INVALID_INPUT`.**
+    - **`env.js` exports `isProd`**, and **`TRUST_PROXY_HOPS`** (default 1, 0–10) sets Express
+      `trust proxy`, replacing the hardcoded 1 (needed for Vercel → Render). It's in `.env.example`.
+      Resolvd's `LOG_CLIENT_IP` debug flag will be added with deployment (Phase 11).
+    - **Kept, by Carter's decision C:** the body-parser errors (`INVALID_JSON`, `PAYLOAD_TOO_LARGE`,
+      `UNSUPPORTED_MEDIA_TYPE`) and the extra `AppError` helpers (`validation`, `unprocessable`,
+      `internal`, `serviceUnavailable`; `badRequest(message, details, code)`). Resolvd will adopt them.
+    - **Kept:** `JWT_SECRET` must be ≥ 96 hex characters (Resolvd: ≥ 32 characters). It's stricter, and
+      each app has its own secret.

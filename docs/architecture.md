@@ -184,16 +184,27 @@ shutdown. Every request passes through, in order:
 
 ### Errors
 
-Services throw `AppError` (`status`, `code`, `message`, `details`). The error handler also translates
-PostgreSQL `23505` → 409 `CONFLICT`, `23503` → 400 `INVALID_REFERENCE`, bad JSON → 400 `INVALID_JSON`,
-oversized bodies → 413. Anything unexpected is logged with the request id and answered with a generic
-500 `INTERNAL_ERROR`, so no internals leak.
+Services throw `AppError` (`status`, `code`, `message`, `details`). The error handler follows the same
+rules as Resolvd's:
+
+- any `ZodError` → 400 `VALIDATION_ERROR` with `details` = `{ formErrors, fieldErrors }` (Zod's
+  flattened error);
+- PostgreSQL `23505` → 409 `CONFLICT`, `23503` → 400 `INVALID_REFERENCE`, `22P02` → 400
+  `INVALID_INPUT`;
+- unknown routes → 404 `NOT_FOUND`.
+
+ScreenGuide also handles bad JSON (400 `INVALID_JSON`) and oversized bodies (413), which Resolvd will
+adopt. Anything unexpected is logged with the request id and answered with a generic 500
+`INTERNAL_ERROR`, so no internals leak. Internal validation (audit events, job payloads) throws a plain
+`Error`, not a `ZodError`, so a bug in our own code shows as a 500, not as the client's fault.
 
 ### Health, readiness and docs
 
-- `GET /api/health`: liveness, no database.
-- `GET /api/ready`: `{ status, database, jobs }`, 503 if either is down (2 s timeout each). Render's
-  health check points here.
+- `GET /api/health`: Resolvd's contract. It runs `SELECT 1` and returns 200
+  `{ status: 'ok', database: 'up' }`, or 503 `{ status: 'degraded', database: 'down' }`. Render's health
+  check points here.
+- `GET /api/ready` (ScreenGuide addition): `{ status, database, jobs }`, 503 `degraded` if either is
+  down. Each check times out after 2 s.
 - `GET /api/docs`: Swagger UI for `server/openapi.yaml`; `GET /api/docs/openapi.json` serves the raw
   document.
 
