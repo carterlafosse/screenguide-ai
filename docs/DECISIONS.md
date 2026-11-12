@@ -462,3 +462,123 @@ compatibility check are recorded in `docs/merge-plan.md`; these entries record w
     - **Idempotent on `(organization_id, source, external_ref)`.** A repeat returns the existing ticket.
       The `TicketSink` interface's own field names inside ScreenGuide may stay camelCase; only the wire
       format is fixed here.
+
+## Resolvd auth alignment (2026-11-12)
+
+52. **2026-11-12: BINDING. ScreenGuide's Phase 3 copies Resolvd's real Phase 3 code** (`carterlafosse/resolvd`
+    at `098c560`, compared read-only). Resolvd is the source of truth for shared conventions. This entry
+    **supersedes entry 49 where they differ** and overrides plan Sections 8.1 (`req.user` shape, separate
+    `authenticate.js` / `requireRole.js` files) and 17.1 where noted. Copy the files below **verbatim**
+    (header comments may gain a ScreenGuide note, nothing else). ScreenGuide-only behaviour goes in
+    separate functions or clearly marked additions, so a later diff against Resolvd stays readable.
+
+    **Copy verbatim:**
+    - `src/modules/auth/session.js`:
+      - cookie `resolvd_token` with options `{ httpOnly: true, secure: isProd, sameSite: 'lax', path: '/' }`
+        and `maxAge` 8 h;
+      - JWT `{ sub: user.id, org: user.organization_id }`, signed with `expiresIn: '8h'`;
+      - `verifySessionToken` pins `algorithms: ['HS256']`;
+      - `clearSessionCookie` uses the same options (no `maxAge`).
+    - `src/middleware/auth.js`, one file:
+      - **`authenticate`:**
+        - no cookie → 401 `UNAUTHORIZED` "Authentication required";
+        - a bad or expired token, a `sub`/`org` that isn't an integer, or a user who is missing or
+          inactive → 401 `UNAUTHORIZED` "Session expired. Please sign in again.";
+        - on success it sets `req.user = { id, orgId, role, name, email }` from
+          `findSessionUser(sub, org)`, which reads the user inside `withOrg`.
+      - **`requireRole(...roles)`:** 403 `FORBIDDEN` with the default message. It runs **before**
+        `validate`.
+    - `src/modules/auth/auth.schemas.js`:
+      - `emailSchema` = trim → lowercase → `z.email().max(255)`;
+      - `personNameSchema` = trim, 1–100;
+      - `passwordSchema`, with the messages exactly as written: "Password must be at least 10
+        characters", "…at most 72 characters", the **72-byte** check "Password is too long", "Password
+        must contain a letter", "Password must contain a number";
+      - `registerOrgSchema`: `organizationName` trim 2–100; `slug` matching `^[a-z0-9-]{3,50}$`, message
+        "Use 3 to 50 lowercase letters, numbers or hyphens";
+      - `loginSchema` only checks `email` (trim, min 1) and `password` (min 1). It does not repeat the
+        password rules.
+    - `src/modules/auth/auth.service.js` rules:
+      - **Constants:** export `BCRYPT_COST = 12`; 5 attempts; 15 minutes.
+      - **Dummy hash:** `DUMMY_HASH = bcrypt.hashSync(randomBytes(32).toString('hex'), 12)` at module
+        load.
+      - **Login order:**
+        1. `auth_find_user_by_email` on the **pool**.
+        2. Unknown **or inactive** → `bcrypt.compare` against the account's own hash, or `DUMMY_HASH`
+           → 401 `INVALID_CREDENTIALS` "Invalid email or password".
+        3. `locked_until > now` → 401 `ACCOUNT_LOCKED` "Account temporarily locked. Try again later.".
+           This is checked **before** the password, with no bcrypt.
+        4. Wrong password → `SELECT auth_record_login_failure($1, 5, 15)` on the **pool** (autocommit),
+           then `INVALID_CREDENTIALS`.
+        5. Success → inside `withOrg`, `recordLoginSuccess` (reset attempts and the lock, set
+           `last_login_at`, `RETURNING USER_COLUMNS`) plus `findCurrentOrganization`.
+      - **Registration:**
+        - hash **before** the transaction;
+        - `withTransaction` → `create_organization` → `setOrg` → insert the admin → (additions below)
+          → `findCurrentOrganization`;
+        - map `23505` by constraint: `users_email_lower_idx` → 409 "That email is already registered";
+          `organizations_slug_key` → 409 "That URL name is taken". Both are code `CONFLICT`, with
+          `details` from `fieldError(field, message)`.
+    - `src/modules/auth/auth.queries.js`: `findUserForLogin`, `recordLoginFailure`, `recordLoginSuccess`,
+      `createOrganization`, `findCurrentOrganization` (not `insertCategories` / `insertSlaPolicies`).
+    - `src/modules/auth/auth.routes.js` / `auth.controller.js`:
+      - **Login limiter:** 10 per 15 minutes per IP, message "Too many login attempts. Try again in 15
+        minutes.", applied before `validate`.
+      - **Logout:** **no session required**, clears the cookie, 204.
+      - **Status codes:** register 201, login 200, `/me` 200.
+    - `src/modules/users/*` (all five files):
+      - **Columns:** `USER_COLUMNS` (never `password_hash`); technicians get `DIRECTORY_COLUMNS`
+        (`id, name, role`), admins get the full columns.
+      - **Routes:**
+        - `GET /users` (T, A; `role`, `active=true|false`);
+        - `POST /users` (A; `name, email, role, department?, password`);
+        - `PATCH /users/me` (any signed-in user; `name`, `emailNotifications`, `currentPassword`,
+          `newPassword`; a new password requires the current one; a wrong current password is 400
+          `INVALID_PASSWORD`, not 401);
+        - `PATCH /users/:id` (A; `name, role, department, isActive`; at least one field).
+        `/me` is registered before `/:id`.
+      - **`UPDATE ... SET`** is built from the `UPDATABLE_COLUMNS` whitelist map only.
+      - **Last admin:**
+        - `lockActiveAdmins` (`FOR UPDATE`, in id order) runs before the target row is locked;
+        - demoting or deactivating yourself → 400 `CANNOT_CHANGE_SELF`;
+        - removing the only active admin → 400 `LAST_ADMIN`;
+        - another org's id → 404 "User not found".
+    - `src/utils/pgErrors.js` (`isUniqueViolation`, `fieldError`).
+    - **Response shapes:**
+      - register, login and `/me` return `{ user, organization: { id, name, slug } }`;
+      - lists return `{ data: [...] }`;
+      - single records are returned bare;
+      - **output is snake_case** as stored, **request bodies are camelCase**.
+    - **Test approach:** `tests/helpers.js` patterns. A fresh `X-Forwarded-For` per login keeps the real
+      login limiter on. Lockout tests use test-created users (bcrypt cost 4), never seed users.
+
+    **ScreenGuide additions (allowed, kept separate from the copied code):**
+    - **Audit:**
+      - `auth.login` is written in the success `withOrg`;
+      - `auth.login_failed` and `auth.locked` are written in their **own** `withOrg` after
+        `recordLoginFailure`, never in a transaction that rolls back;
+      - `org.registered` is written in the registration transaction;
+      - `user.created`, `user.role_changed` and `user.deactivated` are written in the users service
+        transaction.
+      - `auth_record_login_failure` returns `VOID` and must not change. So `auth.locked` is inferred
+        from the row already read (`failed_login_attempts + 1 >= 5`); the audit is best-effort, and the
+        lock itself stays authoritative in the database.
+    - **Registration** also inserts `org_settings` and the admin's `user_preferences` in the same
+      transaction. It adds **no** categories or SLA policies (ScreenGuide has neither table; merge task).
+      The register limiter is 5 per hour per IP (plan 8.5), with its own message.
+    - **`/auth/me`** returns `{ user, organization, preferences, settings }`: Resolvd's two keys plus two.
+    - **`GET /users`:** plan 17.1's `search` and `page` are added on top of `role` / `active`. Paged
+      responses add `pagination: { page, pageSize, total, totalPages }` next to `data`, which is
+      Resolvd's Phase 4 shape.
+    - **Invitations accept** reuses `emailSchema`, `personNameSchema`, `passwordSchema`,
+      `emailTakenError()` and `setSessionCookie()`.
+    - **Categories:** not built (no table). Resolvd's module moves as-is at merge.
+
+    **Wrong `Content-Type`:** Resolvd has no 415 middleware. `express.json()` skips a non-JSON body,
+    `req.body` stays `undefined`, and `validate` fails it with 400 `VALIDATION_ERROR`. 415 comes only
+    from body-parser (unsupported charset or encoding). ScreenGuide does the same once its `validate`
+    stops defaulting a missing part to `{}` (difference A4 in `docs/merge-plan.md`).
+
+    **Already-built ScreenGuide files that differ from Resolvd's Phase 2/3 code** are listed in
+    `docs/merge-plan.md` ("Auth compatibility check"). They're reported there, not fixed yet, pending
+    Carter's go-ahead.

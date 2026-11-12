@@ -1,6 +1,7 @@
 # Merge plan: ScreenGuide AI → Resolvd
 
-> **Status:** compatibility check re-run on 2026-11-11 against Resolvd's real Phase 1 code. The full
+> **Status:** compatibility check re-run on 2026-11-11 against Resolvd's real Phase 1 code; auth check
+> run on 2026-11-12 against Resolvd's real Phase 3 code (see "Auth compatibility check" below). The full
 > merge plan from `SCREENGUIDE_PLAN.md` Section 4.6 is written in Phase 9: what moves, the `TicketSink`
 > swap, the WebSocket attach point, the background-jobs decision, the v3 overlap and the additions
 > Resolvd would gain. Until then, this file records where the two codebases agree and differ.
@@ -133,6 +134,64 @@ settled the open points from the first check.
 | Plan 4.7 #7 | Resolvd's CI uses `postgres:17` | `postgres:18` (both repos now). |
 | Plan 8.7 | `/api/health` doesn't touch the database | Resolvd's contract (DECISIONS 47). |
 | Plan header / `CLAUDE.md` | "Resolvd has not been built yet … don't look for a Resolvd repo" | Resolvd exists and has finished Phase 1. Its code is the reference for the shared files from now on. *(`CLAUDE.md` is Carter's file and hasn't been edited.)* |
+
+## Auth compatibility check (2026-11-12)
+
+**What was compared.** Resolvd at commit **`098c560`** (end of its Phase 3: auth, users, categories;
+cloned read-only outside this repo) against ScreenGuide at `dea28a4`. This compares Resolvd's real code
+and its `docs/DECISIONS.md`, not just its plan.
+
+**Shared migrations and seed:** Resolvd hasn't changed `001`–`003`, `007` or `db/seeds/users.js`
+since `198e1f8`, so the earlier file-level result still holds.
+
+**ScreenGuide's auth isn't built yet** (no `middleware/auth.js`, no `modules/auth`, `users`,
+`categories` or `invitations`). The exact list of what Phase 3 copies from Resolvd, and what
+ScreenGuide adds on top, is recorded as binding in **DECISIONS 52** (it supersedes DECISIONS 49 where
+they differ). Key points:
+
+| Area | Resolvd's actual behaviour (copy this) |
+|---|---|
+| `src/middleware/auth.js` | One file. `authenticate`: no cookie → 401 "Authentication required"; a bad or expired token, a non-integer `sub`/`org`, or a missing or inactive user → 401 "Session expired. Please sign in again." Sets `req.user = { id, orgId, role, name, email }` from a fresh DB read in `withOrg`. `requireRole(...roles)` → 403, runs before `validate`. |
+| Cookie / JWT | `resolvd_token`, `httpOnly`, `secure: isProd`, `sameSite: 'lax'`, `path: '/'`, `maxAge` 8 h. JWT `{ sub, org }`, `expiresIn: '8h'`, verify pins `HS256`. Clear with the same options. |
+| Schemas | `emailSchema` (trim, lowercase, email, max 255); `personNameSchema` (1–100); `passwordSchema` (10–72 characters **and ≤ 72 bytes**, a letter, a number; exact messages in DECISIONS 52); slug `^[a-z0-9-]{3,50}$`; `loginSchema` only checks that the fields are non-empty. |
+| Login | Pool lookup via `auth_find_user_by_email`. Unknown **or inactive** → bcrypt against the account's own hash or a `DUMMY_HASH` generated at startup → 401 `INVALID_CREDENTIALS`. Locked → 401 `ACCOUNT_LOCKED`, checked before the password, no bcrypt. Wrong password → `auth_record_login_failure(id, 5, 15)` on the pool (autocommit) → `INVALID_CREDENTIALS`. Success → reset attempts and the lock and set `last_login_at` in `withOrg`. |
+| Login limiter | 10 / 15 min / IP, message "Too many login attempts. Try again in 15 minutes." |
+| Register | Hash before the transaction; `create_organization` → `setOrg` → admin insert. `23505` mapped by constraint name to 409 with `fieldError` details. 201 + cookie. |
+| Logout / me | Logout needs **no session**, returns 204. Register, login and `/me` all return `{ user, organization: { id, name, slug } }`. |
+| Users | `GET` (T, A; technicians see only `id, name, role`), `POST` (A), `PATCH /users/me` (anyone: name, notifications, password with the current one), `PATCH /users/:id` (A). Last admin: lock every active admin row `FOR UPDATE` in id order, then 400 `CANNOT_CHANGE_SELF` / `LAST_ADMIN`. Wrong current password → 400 `INVALID_PASSWORD`. |
+| Categories | Any signed-in user lists; admins create and rename (never delete); duplicate → 409 with a field error. **Not built in ScreenGuide** (no table); it moves with Resolvd at merge. |
+| Wire format | Output snake_case as stored, request bodies camelCase; lists `{ data }`; single records bare. |
+| Wrong `Content-Type` | No 415 middleware. A non-JSON body isn't parsed, so `req.body` is `undefined` and `validate` returns 400 `VALIDATION_ERROR`. 415 only for an unsupported charset or encoding. |
+
+### Differences in code ScreenGuide has already built
+
+These are the shared Phase 2 files that Resolvd built differently. **Reported only, not fixed yet.**
+Rule: Resolvd is the source of truth, so ScreenGuide changes unless the row says otherwise.
+
+| # | Area | Resolvd (`098c560`) | ScreenGuide (`dea28a4`) | Which side changes |
+|---|---|---|---|---|
+| A1 | `AppError` helper signatures | Every helper is `(message, details, code)` | `validation(details, message)`; `unauthorized`/`forbidden`/`notFound(message, code)` with no details; `conflict`/`unprocessable(message, code, details)`; `tooManyRequests(message)`, `internal(message)` and `serviceUnavailable(message, code)` take no code or details | **ScreenGuide**: copy Resolvd's `AppError.js`. Call sites to update: `errorHandler.js`, `idempotent.js`, `app.test.js`, `idempotency.test.js`. Resolvd's DECISIONS (Phase 2) asks for exactly this alignment; its file comment already claims to match. |
+| A2 | `AppError` default messages | unauthorized "Authentication required"; forbidden "You do not have permission to do that"; validation "Validation failed"; unprocessable "Unprocessable request"; tooManyRequests "Too many requests. Try again later."; serviceUnavailable "Service temporarily unavailable" | "Please sign in to continue"; "You don't have permission to do that"; "Some fields are missing or invalid"; no default; "Too many requests, please try again later"; "Service unavailable" | **ScreenGuide** |
+| A3 | 429 code | `TOO_MANY_REQUESTS` | `RATE_LIMITED` (also pinned in `idempotent.test.js`) | **ScreenGuide** |
+| A4 | `validate()` with a missing part | `schema.parse(req.body)`: `undefined` fails (wrong `Content-Type` → 400) | `safeParse(req[location] ?? {})`: a missing body becomes `{}`, so an all-optional schema passes, and others report field errors instead of "expected object" | **ScreenGuide**: drop `?? {}` (copy Resolvd's `validate.js`) |
+| A5 | Error-handler messages | `23505` "That record already exists"; `23503` "A referenced record does not exist"; `22P02` "A value has the wrong format"; "Request body is not valid JSON"; "Request body is too large"; "Unsupported request body charset" / "…encoding" (two messages) | "That already exists"; "A referenced item does not exist"; "Invalid input"; "The request body is not valid JSON"; "The request body is too large"; one "Unsupported request encoding" | **ScreenGuide** (codes already match) |
+| A6 | Error handler when headers were already sent | `return next(err)`, before logging | Logs the error, then `res.end()` | **ScreenGuide** |
+| A7 | 404 message | `Route not found: GET /api/x` | `No route for GET /api/x` | **ScreenGuide** |
+| A8 | Rate-limit module | `middleware/rateLimit.js`, `createRateLimiter({ windowMs, limit, message })` | `middleware/rateLimits.js`, named factories, one generic message | **ScreenGuide**: adopt Resolvd's file and factory. Keep the register (5/h) and ws-ticket (per user) limiters as additions built on it. The ws-ticket limiter needs an optional `keyGenerator`, which Resolvd can adopt. |
+| A9 | `withTransaction` hardening | Listens for client `error` while checked out; passes the broken connection to `release(err)` so it's destroyed; logs a failed rollback | Swallows a failed rollback and always calls `release()` | **ScreenGuide**: copy Resolvd's version. Resolvd has a test showing that without the listener a late `ECONNRESET` crashes the process. |
+| A10 | `setOrg` guard | No check | Throws on a non-positive or non-integer `orgId` | **Keep ScreenGuide's**, which is stricter. Resolvd may adopt it. |
+| A11 | `trust proxy` | Hardcoded `1` | `TRUST_PROXY_HOPS` (default 1) | **Resolvd**, already planned (DECISIONS 47) |
+| A12 | Register limiter | None | 5 / hour / IP (plan 8.5) | **Keep** as a ScreenGuide addition; Resolvd may adopt it |
+
+### Statements that are now out of date (adds to the table above)
+
+| Where | Says | Now |
+|---|---|---|
+| Plan 8.1 / 13 file tree | `req.user = { id, orgId, role }`; `authenticate.js` and `requireRole.js` as separate files | `{ id, orgId, role, name, email }`; one `middleware/auth.js` (DECISIONS 52) |
+| Plan 17.1 | `POST /auth/logout` roles "any" | No session required (Resolvd) |
+| Plan 17.1 | `PATCH /users/:id`: role, active, name | Also `department`. A separate `PATCH /users/me` (own name, notifications, password) is shared with Resolvd |
+| DECISIONS 49 | "Missing or inactive user → 401"; inactive gets the same 401 | Exact messages, and bcrypt runs for inactive accounts too (DECISIONS 52) |
+| `CLAUDE.md` | "Resolvd has not been built yet" | Resolvd has finished Phase 3. *(Carter's file, not edited.)* |
 
 ## Sections to write in Phase 9 (plan Section 4.6)
 
