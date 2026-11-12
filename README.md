@@ -38,13 +38,27 @@ them with the same passwords.
 
 Use letters and digits only in the passwords (they go into connection URLs).
 
+Afterwards, remove the command (which contains the passwords) from PowerShell's history:
+
+```powershell
+Clear-History
+notepad (Get-PSReadLineOption).HistorySavePath   # delete the psql line, then save
+```
+
 ### 2. Configure the server
 
 ```powershell
 Copy-Item server/.env.example server/.env
 ```
 
-Then edit `server/.env` (never commit it). See `server/.env.example` for every variable.
+Then edit `server/.env` (never commit it). See `server/.env.example` for every variable. For local
+development you need the two database URLs (with the passwords from step 1), `JWT_SECRET`,
+`ENCRYPTION_KEY` and `SEED_PASSWORD` (the password every seeded user signs in with).
+
+> **Databases created before 2026-11-11** were built from older copies of the shared migrations
+> (`002`, `003`, `007`), which were changed in place to match Resolvd. Reset them: drop and recreate
+> the `public` and `pgboss` schemas as `resolvd_owner` (or drop and recreate the databases and rerun
+> `setup.sql`), then `npm run migrate` and `npm run seed`. Tests reset `screenguide_test` themselves.
 
 ### 3. Create the tables and sample data
 
