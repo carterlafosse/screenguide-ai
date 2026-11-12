@@ -176,7 +176,9 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     seeds. Alternative: separate `TEST_DATABASE_URL` variables (more setup, easy to point at dev by
     mistake).
 
-29. **2026-11-07: Seed details.** One shared dev password (`ScreenGuide123`, exported from
+29. **Partly superseded 2026-11-11 by entry 48** (Resolvd's seed users and slugs; password from
+    `SEED_PASSWORD`; the seed truncates everything).
+    **2026-11-07: Seed details.** One shared dev password (`ScreenGuide123`, exported from
     `db/seeds/users.js`), hashed once per run with bcryptjs cost 12 and reused for all 12 users, which
     keeps the seed around 1.5 s. Emails use the reserved `.test` domain. The seed runs as the owner in one
     transaction and can be rerun: it deletes Acme's and Globex's rows first and never touches other orgs.
@@ -201,7 +203,8 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     prints an "injected env" line on every load by default. It names no values, but it is noise in
     server logs and test output.
 
-32. **2026-11-07: `seed()` refuses to run when `NODE_ENV=production`.** Every Acme/Globex user shares the
+32. **Wording updated 2026-11-11 by entry 48** (the guard stays; message matches Resolvd's).
+    **2026-11-07: `seed()` refuses to run when `NODE_ENV=production`.** Every Acme/Globex user shares the
     published password `ScreenGuide123`, so seeding a production database would create known-password
     accounts. The check is inside `seed()`, before hashing or connecting, so it covers both
     `npm run seed` (which exits with code 1) and any code that imports it; a unit test asserts it never
@@ -392,3 +395,24 @@ compatibility check are recorded in `docs/merge-plan.md`; these entries record w
       `internal`, `serviceUnavailable`; `badRequest(message, details, code)`). Resolvd will adopt them.
     - **Kept:** `JWT_SECRET` must be ≥ 96 hex characters (Resolvd: ≥ 32 characters). It's stricter, and
       each app has its own secret.
+
+48. **2026-11-11: Seed and script layout aligned with Resolvd.**
+    - **`db/seeds/users.js` is a verbatim copy of Resolvd's.** `SEED_ORGS` is an object
+      (`acme: { name: 'Acme Corp', slug: 'acme-corp' }`, `globex`), and `USERS` is keyed by org and a
+      role handle (`USERS.acme.tech1`). The names and departments are Resolvd's, so the two test
+      suites use the same people. The hardcoded password and `seedEmail()` are gone.
+    - **The password comes from `SEED_PASSWORD`** in `server/.env` (placeholder in `.env.example`; tests
+      use a fixed test-only value in `vitest.config.js`). It's required, hashed once with bcryptjs cost
+      12 and never printed. The runner prints a table of logins without it.
+    - **`seed()` resets the database** like Resolvd's: `TRUNCATE` every ScreenGuide tenant table
+      `RESTART IDENTITY CASCADE` (pg-boss untouched), so Acme is org 1 and Globex is org 2. It checks,
+      in Resolvd's order and wording: connection string, `SEED_PASSWORD`, then refuses in production.
+    - **Code in `scripts/lib/migrate.js` and `scripts/lib/seed.js`**, with two-line runners
+      `scripts/migrate.js` and `scripts/seed.js`, the same layout as Resolvd. The runners load `.env`
+      through `src/config/loadDotenv.js`. Resolvd has `scripts/lib/loadEnv.js`, which also loads
+      `.env.test`; ScreenGuide keeps its test setup (decision D, entry 50).
+    - Small differences that are ScreenGuide's own: `seed(connectionString, { password, log })`
+      returns the seeded ids (tests use them) and doesn't print the table itself, so test output
+      stays quiet. `migrate()` keeps its advisory lock, app-role refusal and `dir` option (entry 30).
+    - Supersedes the slug, password and export details in entry 29, and entry 32's wording (the guard
+      stays).

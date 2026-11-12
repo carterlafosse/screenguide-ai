@@ -135,10 +135,13 @@ definer function.
 
 ### Seeds
 
-`npm run seed` (as the owner) creates **Acme Corp** and **Globex**: each has 1 admin, 2 technicians and
-3 end users (emails and the shared dev password live in `server/db/seeds/users.js`), plus settings,
-preferences, a resolved session with feedback, an escalated session with a ticket and an active
-session. Rerunning replaces those two orgs and leaves any other data alone.
+`npm run seed` (as the owner) resets the database: it truncates every organization's data, then
+creates **Acme Corp** (`acme-corp`) and **Globex** (`globex`). The orgs and users are the same as
+Resolvd's seed (`server/db/seeds/users.js`, a copy of Resolvd's): each org has 1 admin, 2 technicians
+and 3 end users, keyed as `USERS.acme.tech1` and so on. Every user signs in with `SEED_PASSWORD` from
+`server/.env`. ScreenGuide adds settings, preferences, a resolved session with feedback, an escalated
+session with a ticket, an active session, and at least one row in every other tenant table. The code
+is in `scripts/lib/seed.js`; `scripts/seed.js` is the runner. It refuses to run in production.
 
 ### Tests
 

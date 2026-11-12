@@ -27,8 +27,8 @@ const app = createApp({
       throw AppError.validation([{ path: 'email', message: 'Required' }]);
     });
     r.get('/test/unique', async () => {
-      // 'acme' is a seeded slug, so the definer function hits the UNIQUE constraint (23505).
-      await withTransaction((c) => c.query("SELECT create_organization('Dup', 'acme')"));
+      // 'acme-corp' is a seeded slug, so the definer function hits the UNIQUE constraint (23505).
+      await withTransaction((c) => c.query("SELECT create_organization('Dup', 'acme-corp')"));
     });
     r.get('/test/fk', async () => {
       await withOrg(ids.acme.id, (c) =>

@@ -51,11 +51,14 @@ Then edit `server/.env` (never commit it). See `server/.env.example` for every v
 ```powershell
 cd server; npm install
 npm run migrate    # applies db/migrations to screenguide_dev as resolvd_owner
-npm run seed       # Acme Corp and Globex sample orgs (password for every seeded user: ScreenGuide123)
+npm run seed       # resets the database to the Acme Corp and Globex sample orgs
 ```
 
-Seeded logins are listed in `server/db/seeds/users.js` (for example `admin@acme.test`). `npm test` uses
-the separate `screenguide_test` database and resets it on every run.
+Every seeded user signs in with the `SEED_PASSWORD` you set in `server/.env` (it's never printed or
+committed). `npm run seed` prints the logins, for example `admin@acme.test`. It **wipes every
+organization** in `screenguide_dev`, like Resolvd's seed, and refuses to run with
+`NODE_ENV=production`. `npm test` uses the separate `screenguide_test` database and resets it on every
+run.
 
 ### 4. Run
 

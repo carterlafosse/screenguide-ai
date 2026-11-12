@@ -1,6 +1,7 @@
 // dbHelpers.js: direct database helpers for tests that check the schema, RLS and grants.
 // Phase 2 adds the app's own pool/withOrg; these stay low-level on purpose.
 import { Client } from 'pg';
+import { SEED_ORGS } from '../db/seeds/users.js';
 
 /**
  * Run fn with a fresh client connected as resolvd_app (RLS applies), then disconnect.
@@ -64,13 +65,18 @@ export async function getSeedIds() {
     const { rows } = await client.query(
       `SELECT o.slug, o.id AS org_id, u.id AS user_id, split_part(u.email, '@', 1) AS user_key
        FROM organizations o JOIN users u ON u.organization_id = o.id
-       WHERE o.slug IN ('acme', 'globex')`,
+       WHERE o.slug = ANY($1)`,
+      [Object.values(SEED_ORGS).map((o) => o.slug)],
+    );
+    const keyBySlug = Object.fromEntries(
+      Object.entries(SEED_ORGS).map(([key, o]) => [o.slug, key]),
     );
     /** @type {Record<string, { id: number, users: Record<string, number> }>} */
     const ids = {};
     for (const r of rows) {
-      ids[r.slug] ??= { id: r.org_id, users: {} };
-      ids[r.slug].users[r.user_key] = r.user_id;
+      const key = keyBySlug[r.slug];
+      ids[key] ??= { id: r.org_id, users: {} };
+      ids[key].users[r.user_key] = r.user_id;
     }
     return ids;
   });

@@ -15,6 +15,7 @@ const TEST_ENV = {
   NODE_ENV: 'test',
   LOG_LEVEL: 'silent',
   AI_MOCK: 'true',
+  SEED_PASSWORD: 'TestOnlySeed123',
   JWT_SECRET: 'ab'.repeat(48),
   ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
   CLIENT_ORIGIN: 'http://127.0.0.1:5174',

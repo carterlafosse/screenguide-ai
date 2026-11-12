@@ -1,6 +1,6 @@
 # Migrations
 
-Numbered `.sql` files applied in order by `scripts/migrate.js` (added in Phase 1), each in one
+Numbered `.sql` files applied in order by `scripts/lib/migrate.js` (run with `npm run migrate`), each in one
 transaction, recorded in `schema_migrations`, run as `resolvd_owner` via `MIGRATION_DATABASE_URL`.
 
 - `001`–`003`, `007` mirror Resolvd's shared migrations exactly (plan Section 4.3).
