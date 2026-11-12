@@ -121,16 +121,74 @@ describe('schema rules', () => {
     }
   });
 
-  it('organizations has RLS with the org_self policy', async () => {
+  it("organizations has RLS with Resolvd's org_self policy (USING only)", async () => {
     const row = await withOwnerClient(async (c) => {
       const r = await c.query(`
-        SELECT c.relrowsecurity AS rls, p.qual
+        SELECT c.relrowsecurity AS rls, p.qual, p.with_check
         FROM pg_class c
         LEFT JOIN pg_policies p ON p.tablename = c.relname AND p.policyname = 'org_self'
         WHERE c.relname = 'organizations' AND c.relnamespace = 'public'::regnamespace`);
       return r.rows[0];
     });
-    expect(row).toEqual({ rls: true, qual: '(id = current_org_id())' });
+    expect(row).toEqual({ rls: true, qual: '(id = current_org_id())', with_check: null });
+  });
+
+  it("the shared tables use Resolvd's trigger names", async () => {
+    const triggers = await withOwnerClient(async (c) => {
+      const r = await c.query(`
+        SELECT tgrelid::regclass::text AS table_name, tgname
+        FROM pg_trigger
+        WHERE NOT tgisinternal AND tgrelid IN ('organizations'::regclass, 'users'::regclass)
+        ORDER BY 1`);
+      return r.rows;
+    });
+    expect(triggers).toEqual([
+      { table_name: 'organizations', tgname: 'organizations_updated_at' },
+      { table_name: 'users', tgname: 'users_updated_at' },
+    ]);
+  });
+
+  it("the shared definer functions have Resolvd's exact signatures and return types", async () => {
+    const rows = await withOwnerClient(async (c) => {
+      const r = await c.query(`
+        SELECT p.proname AS name,
+               pg_get_function_identity_arguments(p.oid) AS args,
+               pg_get_function_result(p.oid) AS result
+        FROM pg_proc p
+        WHERE p.pronamespace = 'public'::regnamespace
+          AND p.proname IN ('auth_find_user_by_email', 'auth_record_login_failure', 'create_organization')
+        ORDER BY p.proname`);
+      return r.rows;
+    });
+    expect(rows).toEqual([
+      {
+        name: 'auth_find_user_by_email',
+        args: 'p_email text',
+        result:
+          'TABLE(id integer, organization_id integer, password_hash text, role user_role, ' +
+          'is_active boolean, failed_login_attempts integer, locked_until timestamp with time zone)',
+      },
+      {
+        name: 'auth_record_login_failure',
+        args: 'p_user_id integer, p_max_attempts integer, p_lock_minutes integer',
+        result: 'void',
+      },
+      { name: 'create_organization', args: 'p_name text, p_slug text', result: 'integer' },
+    ]);
+  });
+
+  it('resolvd_app can use every sequence in public (Resolvd grants USAGE on all of them)', async () => {
+    const missing = await withOwnerClient(async (c) => {
+      const r = await c.query(`
+        SELECT c.relname FROM pg_class c
+        WHERE c.relkind = 'S' AND c.relnamespace = 'public'::regnamespace
+          -- CASE guards the call: the planner may otherwise evaluate it on non-sequence rows.
+          AND CASE WHEN c.relkind = 'S'
+                   THEN NOT has_sequence_privilege('resolvd_app', c.oid, 'USAGE')
+                   ELSE FALSE END`);
+      return r.rows.map((x) => x.relname);
+    });
+    expect(missing).toEqual([]);
   });
 
   it('every SECURITY DEFINER function pins search_path and is executable only by resolvd_app', async () => {
@@ -151,6 +209,7 @@ describe('schema rules', () => {
     expect(rows.map((r) => r.name)).toEqual([
       'accept_invitation',
       'auth_find_user_by_email',
+      'auth_record_login_failure',
       'consume_ws_ticket',
       'create_organization',
       'purge_expired_sessions',

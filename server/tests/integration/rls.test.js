@@ -3,7 +3,6 @@
 // WITH CHECK, composite foreign keys, the append-only audit log and the SECURITY DEFINER functions.
 import { createHash, randomBytes } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { seedEmail } from '../../db/seeds/users.js';
 import {
   getSeedIds,
   inRolledBackTx,
@@ -197,14 +196,51 @@ describe('SECURITY DEFINER functions as resolvd_app', () => {
         (await c.query('SELECT * FROM auth_find_user_by_email($1)', ['ADMIN@Acme.TEST'])).rows,
     );
     expect(rows).toHaveLength(1);
+    // Exactly Resolvd's seven columns, in Resolvd's order.
+    expect(Object.keys(rows[0])).toEqual([
+      'id',
+      'organization_id',
+      'password_hash',
+      'role',
+      'is_active',
+      'failed_login_attempts',
+      'locked_until',
+    ]);
     expect(rows[0]).toMatchObject({
       id: ids.acme.users.admin,
       organization_id: ids.acme.id,
-      email: seedEmail('acme', 'admin'),
       role: 'admin',
       is_active: true,
+      failed_login_attempts: 0,
+      locked_until: null,
     });
     expect(rows[0].password_hash).toMatch(/^\$2[aby]\$12\$/);
+  });
+
+  it('auth_record_login_failure counts failures with no org set, then locks and resets at the max', async () => {
+    const result = await withAppClient((c) =>
+      inRolledBackTx(c, null, async () => {
+        const state = async () =>
+          (await c.query('SELECT * FROM auth_find_user_by_email($1)', ['user2@acme.test'])).rows[0];
+        const userId = (await state()).id;
+        const counts = [];
+        for (let i = 0; i < 5; i += 1) {
+          await c.query('SELECT auth_record_login_failure($1, 5, 15)', [userId]);
+          const s = await state();
+          counts.push(s.failed_login_attempts);
+          if (i === 4) {
+            const lockedMinutes = (s.locked_until.getTime() - Date.now()) / 60000;
+            return { counts, lockedMinutes };
+          }
+          expect(s.locked_until).toBeNull();
+        }
+        return null;
+      }),
+    );
+    // 1, 2, 3, 4, then the 5th failure locks the account and the counter starts again at 0.
+    expect(result.counts).toEqual([1, 2, 3, 4, 0]);
+    expect(result.lockedMinutes).toBeGreaterThan(14);
+    expect(result.lockedMinutes).toBeLessThanOrEqual(15);
   });
 
   it('create_organization creates an org with no org set', async () => {
@@ -290,11 +326,7 @@ describe('SECURITY DEFINER functions as resolvd_app', () => {
       { user_id: result.user.id, organization_id: ids.acme.id, role: 'technician' },
     ]);
     expect(result.reuseMessage).toBe('INVITATION_INVALID');
-    expect(result.user).toMatchObject({
-      organization_id: ids.acme.id,
-      email: 'new.person@acme.test',
-      role: 'technician',
-    });
+    expect(result.user).toMatchObject({ organization_id: ids.acme.id, role: 'technician' });
   });
 
   it('purge_expired_sessions deletes finished sessions past retention, with their children', async () => {

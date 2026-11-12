@@ -1,6 +1,4 @@
--- 003_users.sql: users, shared with Resolvd (plan Section 4.1; never altered by ScreenGuide).
--- ScreenGuide defines the shared shape first: name, email and password_hash are NOT NULL, and
--- Resolvd's 003 must copy this file exactly (docs/DECISIONS.md entry 22).
+-- 003: Users. Columns are shared with ScreenGuide AI, so they must not change.
 
 CREATE TABLE users (
   id                    SERIAL PRIMARY KEY,
@@ -17,12 +15,12 @@ CREATE TABLE users (
   email_notifications   BOOLEAN NOT NULL DEFAULT TRUE,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Target for composite foreign keys, so other tables can only reference a user in the same org.
   UNIQUE (organization_id, id)
 );
 
--- Unique across all organizations.
+-- Emails are unique across all organizations (login doesn't ask which org), ignoring case.
 CREATE UNIQUE INDEX users_email_lower_idx ON users (LOWER(email));
 
-CREATE TRIGGER users_set_updated_at
-  BEFORE UPDATE ON users
+CREATE TRIGGER users_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();

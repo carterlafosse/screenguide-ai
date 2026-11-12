@@ -130,7 +130,8 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     nullability of these columns. (First draft: nullable, copied verbatim; changed before Phase 1 was
     pushed.)
 
-23. **2026-11-07: `org_self` on `organizations` also has `WITH CHECK (id = current_org_id())`.** Section
+23. **Superseded 2026-11-11 by entry 46** (`org_self` is now `USING` only, matching Resolvd's 007).
+    **2026-11-07: `org_self` on `organizations` also has `WITH CHECK (id = current_org_id())`.** Section
     4.1 gives only the expression; using it for both `USING` and `WITH CHECK` matches `org_isolation` and
     stops an org row being updated to another id. New orgs are inserted only through
     `create_organization`.
@@ -207,7 +208,9 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     connects. The demo seed (`seed:demo`, Phase 9) is a separate script for production's demo org and
     gets its own rules.
 
-33. **2026-11-07: Two more shared-shape details in `007_row_level_security.sql` that Resolvd must
+33. **Superseded 2026-11-11 by entry 46** (Resolvd's real 007 has `org_self` `USING` only and a
+    7-column `auth_find_user_by_email`; ScreenGuide now matches it).
+    **2026-11-07: Two more shared-shape details in `007_row_level_security.sql` that Resolvd must
     copy.** Section 4.1 doesn't spell these out, and ScreenGuide implements the shared migrations first:
     - **`org_self` has `WITH CHECK (id = current_org_id())`** as well as `USING`, so an org row can't be
       updated to another id (reasoning in entry 23).
@@ -327,3 +330,36 @@ All resolved in Resolvd's favour. Section 4.1 is the source of truth.
     tenant query (it reads no table), so it doesn't need `withOrg`. Jobs are checked by a pg-boss queue
     lookup. Each check times out after 2 s, and either one being down returns 503 with
     `{ status: 'unavailable', database, jobs }`.
+
+---
+
+## Resolvd alignment (2026-11-11)
+
+Resolvd's Phase 1 now exists (`carterlafosse/resolvd` at `198e1f8`). Carter's decisions after the
+compatibility check are recorded in `docs/merge-plan.md`; these entries record what changed here.
+
+46. **2026-11-11: EXCEPTION: pushed shared migrations `002`, `003` and `007` were edited in place to
+    match Resolvd's real files**, and `screenguide_dev` and `screenguide_test` were reset (dropped and
+    re-migrated). Normally a committed migration is never edited. Carter approved this one-time
+    exception because:
+    - ScreenGuide has no production or shared database yet; only Carter's local dev and test
+      databases, which were reset, had run the old files.
+    - The shared files must be identical in both repos for the merge. Fixing them with a new 1xx
+      migration would leave a redefinition that has to be removed again at merge time.
+
+    What changed:
+    - `002_organizations.sql` and `003_users.sql` are now byte-for-byte copies of Resolvd's (trigger
+      names `organizations_updated_at` and `users_updated_at`, plus Resolvd's comments).
+    - `001_types_and_helpers.sql` uses Resolvd's text but still leaves out the two ticket enums
+      (plan 4.3).
+    - `007_row_level_security.sql` is Resolvd's text limited to `users` and `organizations`:
+      - `org_self` is `USING (id = current_org_id())` only;
+      - `auth_find_user_by_email` returns Resolvd's 7 columns in Resolvd's order;
+      - `auth_record_login_failure(p_user_id INT, p_max_attempts INT, p_lock_minutes INT)
+        RETURNS VOID` is added, with Resolvd's body (decision A);
+      - `GRANT USAGE ON ALL SEQUENCES IN SCHEMA public` replaces the single-sequence grant.
+
+    Tests now pin the trigger names, all three function signatures and return types, the `org_self`
+    policy (no `WITH CHECK`), and `USAGE` on every sequence. **From here on, 001–003 and 007 only change
+    when Resolvd's do, and only by copying them.** Anyone with an older ScreenGuide database must reset
+    it (README).
